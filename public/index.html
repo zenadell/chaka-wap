@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Temple's Data Collector</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        .log-entry {
+            border-bottom: 1px solid #1e293b;
+            padding: 4px 0;
+        }
+    </style>
+</head>
+
+<body class="p-10">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="mb-8 border-b border-green-500 pb-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-green-400">WhatsApp Data Extractor</h1>
+                <p class="text-sm text-gray-400">Chaka AI Training Module</p>
+            </div>
+            <div id="status-badge" class="px-4 py-2 bg-yellow-600 rounded text-xs font-bold uppercase">Disconnected
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+
+            <div>
+                <div id="qr-container"
+                    class="bg-white p-4 rounded-lg shadow-lg w-64 h-64 flex items-center justify-center mx-auto mb-6">
+                    <p class="text-black text-center text-sm">Waiting for QR...</p>
+                </div>
+
+                <div class="bg-slate-800 p-4 rounded-lg h-64 overflow-y-auto border border-slate-700">
+                    <h3 class="text-xs font-bold text-gray-500 mb-2 uppercase">System Logs</h3>
+                    <div id="logs" class="text-xs space-y-1"></div>
+                </div>
+            </div>
+
+            <div>
+                <h2 class="text-xl font-bold mb-4 text-green-400">Live Data Stream</h2>
+                <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs uppercase bg-slate-900 text-gray-400">
+                            <tr>
+                                <th class="px-6 py-3">Contact Name</th>
+                                <th class="px-6 py-3">Status</th>
+                                <th class="px-6 py-3 text-right">Msgs Saved</th>
+                            </tr>
+                        </thead>
+                        <tbody id="contact-list">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const logsDiv = document.getElementById('logs');
+        const contactList = document.getElementById('contact-list');
+        const qrContainer = document.getElementById('qr-container');
+        const statusBadge = document.getElementById('status-badge');
+
+        // LOGGING FUNCTION
+        socket.on('log', (msg) => {
+            const div = document.createElement('div');
+            div.className = 'log-entry text-green-200';
+            div.textContent = `> ${msg}`;
+            logsDiv.appendChild(div);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        });
+
+        // QR CODE DISPLAY
+        socket.on('qr_code', (url) => {
+            qrContainer.innerHTML = `<img src="${url}" class="w-full h-full" />`;
+            statusBadge.innerText = "Scan Required";
+            statusBadge.className = "px-4 py-2 bg-yellow-600 rounded text-xs font-bold uppercase";
+        });
+
+        // STATUS CHANGE
+        socket.on('status', (status) => {
+            if (status === 'connected') {
+                qrContainer.innerHTML = `<div class="text-green-600 font-bold text-2xl">CONNECTED</div>`;
+                statusBadge.innerText = "System Active";
+                statusBadge.className = "px-4 py-2 bg-green-600 rounded text-xs font-bold uppercase";
+            }
+        });
+
+        // UPDATE CONTACT TABLE
+        socket.on('processing_contact', (data) => {
+            const existingRow = document.getElementById(`row-${data.id}`);
+            if (existingRow) return;
+
+            const row = document.createElement('tr');
+            row.id = `row-${data.id}`;
+            row.className = "bg-slate-800 border-b border-slate-700";
+            row.innerHTML = `
+                <td class="px-6 py-4 font-medium text-white">${data.name}</td>
+                <td class="px-6 py-4 text-yellow-400 animate-pulse">Processing...</td>
+                <td class="px-6 py-4 text-right font-mono" id="count-${data.id}">0</td>
+            `;
+            contactList.prepend(row); // Add to top
+        });
+
+        socket.on('contact_update', (data) => {
+            // Use the ID directly from backend
+            const countCell = document.getElementById(`count-${data.id}`);
+            const row = document.getElementById(`row-${data.id}`);
+
+            if (countCell) countCell.innerText = data.count;
+            // Update status logic if needed, for legacy support or other indicators
+        });
+    </script>
+</body>
+
+</html>
