@@ -1694,12 +1694,20 @@ async function bootServer() {
     await initDB();
     await initLocalAI();
 
-    // UNIFIED SESSION RECOVERY
+    // UNIFIED SESSION RECOVERY & SCRUBBER
     if (fs.existsSync('./data')) {
         const folders = fs.readdirSync('./data').filter(f => f.startsWith('auth_baileys_'));
         console.log(`[SYSTEM] Recovering ${folders.length} accounts from persistent disk...`);
         for (const f of folders) {
             const globalId = f.replace('auth_baileys_', '');
+
+            // Proactive Scrubbing for corrupted session IDs
+            if (globalId.includes('_undefined') || globalId.endsWith('_')) {
+                 console.log(`[SCRUBBER] Deleting corrupted session folder from disk: ${f}`);
+                 try { fs.rmSync(`./data/${f}`, { recursive: true, force: true }); } catch (e) {}
+                 continue;
+            }
+
             const parts = globalId.split('_');
             if (parts.length >= 2) {
                 const userId = parts[0];
@@ -1707,7 +1715,7 @@ async function bootServer() {
                 if (userId && id && !sessions.has(globalId)) {
                     console.log(`[BOOT] Waking node: ${id} for user: ${userId}`);
                     startSession(userId, id);
-                    await new Promise(r => setTimeout(r, 5000)); // Stagger connection to avoid bans
+                    await new Promise(r => setTimeout(r, 8000)); // Increased stagger for safety
                 }
             }
         }
