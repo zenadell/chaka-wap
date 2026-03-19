@@ -833,25 +833,8 @@ io.use((socket, next) => {
     });
 });
 
+// --- PERSISTENCE: Memory sessions Map held here ---
 const sessions = new Map();
-
-// --- PERSISTENCE: RECOVER SESSIONS FROM DISK ON BOOT ---
-function loadPersistedSessions() {
-    try {
-        const dataDir = './data';
-        if (!fs.existsSync(dataDir)) return;
-        const files = fs.readdirSync(dataDir);
-        const folders = files.filter(f => f.startsWith('auth_baileys_'));
-        console.log(`[SYSTEM] Found ${folders.length} archived sessions on disk. Restoring memory placeholders...`);
-        folders.forEach(f => {
-            const globalId = f.replace('auth_baileys_', '');
-            if (!sessions.has(globalId)) {
-                sessions.set(globalId, { isConnected: false, connectionState: 'disconnected', handshakeTimer: null });
-            }
-        });
-    } catch (e) { console.error("Session recovery failed:", e); }
-}
-loadPersistedSessions();
 
 function getSafeTimestamp(ts) {
     if (!ts) return Math.floor(Date.now() / 1000);
@@ -1688,7 +1671,9 @@ io.on('connection', (socket) => {
         if (!id || !userId) return;
         const globalId = `${userId}_${id}`;
         const s = sessions.get(globalId); 
-        if (s && s.sock) s.sock.end(undefined); 
+        if (s && s.sock) {
+            try { s.sock.end(undefined); } catch (e) {}
+        }
         sessions.delete(globalId);
         try { 
             const path = `./data/auth_baileys_${globalId}`;
@@ -1696,274 +1681,6 @@ io.on('connection', (socket) => {
             console.log(`[SYSTEM] Deleted persistent session folder: ${path}`);
         } catch (e) { }
         socket.emit('session_deleted', id);
-    });
-
-    socket.on('fetch_db_sessions', async () => {
-        try {
-            const rows = await db.all(`SELECT DISTINCT session_id FROM contacts WHERE user_id = ?`, [userId]);
-            let sessionIds = rows.map(r => r.session_id);
-            const files = fs.readdirSync(__dirname);
-            const authFolders = files.filter(f => f.startsWith(`auth_baileys_${userId}_`)).map(f => f.replace(`auth_baileys_${userId}_`, ''));
-            sessionIds = Array.from(new Set([...sessionIds, ...authFolders]));
-            socket.emit('db_session_list', sessionIds);
-        } catch (e) { socket.emit('db_session_list', []); }
-    });
-
-    socket.on('refresh_connection', (id) => {
-        console.log(`[${id}] 🔄 MANUALLY TRIGGERED REFRESH BY USER.`);
-        const globalId = `${userId}_${id}`;
-        const s = sessions.get(globalId);
-        if (s) {
-            if (s.handshakeTimer) clearTimeout(s.handshakeTimer);
-            if (s.watchdogTimer) clearInterval(s.watchdogTimer);
-            io.emit('log', { sessionId: id, msg: `🔄 Refresh initiated. Disconnecting...` });
-            try { s.sock.ws.close(); } catch(e) {}
-            try { s.sock.end(undefined); } catch (e) {}
-        }
-        sessions.delete(globalId);
-        try { fs.rmSync(`auth_baileys_${globalId}`, { recursive: true, force: true }); } catch (e) { }
-        io.emit('status', { sessionId: id, status: 'disconnected' });
-        setTimeout(() => startSession(userId, id), 2000);
-    });
-
-    socket.on('get_contacts', async (id) => {
-        try {
-            const rows = await db.all(`SELECT * FROM contacts WHERE session_id = ? AND user_id = ? ORDER BY name COLLATE NOCASE`, [id, userId]);
-            const list = rows.map(r => {
-                const cleanId = r.contact_id.split('_')[0].split('@')[0];
-                return {
-                    id: r.contact_id,
-                    name: r.name || null,
-                    cleanId: cleanId,
-                    isLid: r.contact_id.includes('lid')
-                };
-            });
-            socket.emit('contact_list', { sessionId: id, contacts: list });
-        } catch (e) { console.error(e); }
-    });
-
-    socket.on('get_contact_settings', async ({ sessionId, contactId }) => {
-        try {
-            const row = await db.get(`SELECT auto_reply, custom_prompt FROM contacts WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [sessionId, contactId, userId]);
-            socket.emit('contact_settings', row ? {
-                custom_prompt: row.custom_prompt || "",
-                auto_reply: row.auto_reply === 1
-            } : { custom_prompt: "", auto_reply: true });
-        } catch (e) { }
-    });
-
-    socket.on('update_contact_settings', async ({ sessionId, contactId, settings }) => {
-        try {
-            await db.run(`UPDATE contacts SET custom_prompt = ?, auto_reply = ? WHERE session_id = ? AND contact_id = ? AND user_id = ?`,
-                [settings.custom_prompt || "", settings.auto_reply ? 1 : 0, sessionId, contactId, userId]);
-            socket.emit('log', { sessionId, msg: `⚙️ Settings updated for ${contactId} (Auto-Pilot: ${settings.auto_reply ? 'ON' : 'OFF'})` });
-        } catch (e) { }
-    });
-
-    socket.on('get_master_toggle', async (sessionId) => {
-        try {
-            const row = await db.get(`SELECT master_auto_reply FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-            socket.emit('master_toggle_data', { sessionId, enabled: row ? row.master_auto_reply === 1 : true });
-        } catch (e) { }
-    });
-
-    socket.on('set_master_toggle', async ({ sessionId, enabled }) => {
-        try {
-            await db.run(`UPDATE global_settings SET master_auto_reply = ? WHERE id = 'settings' AND user_id = ?`, [enabled ? 1 : 0, userId]);
-            socket.emit('log', { sessionId, msg: `🔥 Master Auto-Reply: ${enabled ? 'ON' : 'OFF'}` });
-        } catch (e) { }
-    });
-
-    socket.on('get_global', async (sessionId) => {
-        try {
-            const row = await db.get(`SELECT custom_prompt FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-            socket.emit('global_data', row ? { custom_prompt: row.custom_prompt || "" } : { custom_prompt: "" });
-        } catch (e) { }
-    });
-
-    socket.on('save_global', async ({ sessionId, custom_prompt }) => {
-        try {
-            await db.run(`UPDATE global_settings SET custom_prompt = ? WHERE id = 'settings' AND user_id = ?`, [custom_prompt || "", userId]);
-            socket.emit('log', { sessionId, msg: `🌍 Global Persona Updated!` });
-        } catch (e) { }
-    });
-
-    socket.on('get_chat_history', async ({ sessionId, contactId }) => {
-        try {
-            const rows = await db.all(`SELECT * FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 50`, [sessionId, contactId, userId]);
-            const formatted = rows.map(r => ({ ...r, is_from_me: !!r.is_from_me }));
-            socket.emit('chat_history', { contactId, messages: formatted.reverse() });
-        } catch (e) { }
-    });
-
-    socket.on('get_ai_config', () => {
-        socket.emit('ai_config_data', { active_api: ACTIVE_API, chaka_model: CHAKA_MODEL, api_keys: API_KEYS.join(', ') });
-    });
-
-    socket.on('update_config', async ({ sessionId, updates }) => {
-        try {
-            if (updates.masterAutoReply !== undefined) {
-                await db.run(`UPDATE global_settings SET master_auto_reply = ? WHERE id = 'settings'`, [updates.masterAutoReply ? 1 : 0]);
-                socket.emit('log', { sessionId, msg: `🔥 Master Auto-Reply: ${updates.masterAutoReply ? 'ON' : 'OFF'}` });
-            }
-            if (updates.globalPrompt !== undefined) {
-                await db.run(`UPDATE global_settings SET custom_prompt = ? WHERE id = 'settings'`, [updates.globalPrompt || ""]);
-                socket.emit('log', { sessionId, msg: `🌍 Global Persona Updated!` });
-            }
-            if (updates.aiEngine !== undefined) {
-                ACTIVE_API = updates.aiEngine || 'gemini';
-                await db.run(`UPDATE global_settings SET active_api = ? WHERE id = 'settings'`, [ACTIVE_API]);
-                socket.emit('log', { sessionId: 'SYSTEM', msg: `⚙️ Engine Switched to: ${ACTIVE_API.toUpperCase()}` });
-            }
-            if (updates.chakaModel !== undefined) {
-                CHAKA_MODEL = updates.chakaModel;
-                await db.run(`UPDATE global_settings SET chaka_model = ? WHERE id = 'settings'`, [CHAKA_MODEL]);
-            }
-
-            // Sync back to ALL clients to keep UI toggles in lock-step
-            const row = await db.get(`SELECT * FROM global_settings WHERE id = 'settings'`);
-            const config = {
-                globalPrompt: row.custom_prompt,
-                masterAutoReply: row.master_auto_reply === 1,
-                aiEngine: row.active_api,
-                chakaModel: row.chaka_model
-            };
-            io.emit('config_data', { sessionId, config });
-        } catch (e) { console.error("Config Update Error:", e); }
-    });
-
-    socket.on('get_config', async (sessionId) => {
-        try {
-            const row = await db.get(`SELECT * FROM global_settings WHERE id = 'settings'`);
-            const config = {
-                globalPrompt: row.custom_prompt,
-                masterAutoReply: row.master_auto_reply === 1,
-                aiEngine: row.active_api,
-                chakaModel: row.chaka_model
-            };
-            socket.emit('config_data', { sessionId, config });
-        } catch (e) { }
-    });
-
-    socket.on('self_train', async (id) => {
-        if (!id) return;
-        await reindexDatabase(id);
-    });
-
-    socket.on('manual_scrape', async ({ sessionId, jid }) => {
-        if (!sessionId || !jid) return;
-        await scrapeChatHistory(sessionId, jid);
-    });
-
-    socket.on('test_inject', async (sessionId) => {
-        try {
-            console.log(`[${sessionId}] 🧪 Running Memory Retrieval Diagnostic...`);
-            const testMsg = "Do you remember what I asked you about General kinetics systems General kinetix";
-            const reply = await generateSmartReply(sessionId, "TEST_USER", "debug_user", testMsg);
-            socket.emit('log', { sessionId, msg: `🧪 Diagnostic Complete. AI recalled ${testMsg.length} chars of context.` });
-            console.log(`[${sessionId}] 🧪 AI Response: ${reply}`);
-        } catch (e) {
-            console.error("Test Inject Error:", e);
-        }
-    });
-
-    // ... existing stats/clear/logout events ...
-    // (keeping them as is)
-
-
-    socket.on('get_db_stats', async (sessionId) => {
-        try {
-            let msgCount, contactCount, stickerCount;
-            if (sessionId) {
-                msgCount = await db.get('SELECT COUNT(*) as count FROM messages WHERE session_id = ?', [sessionId]);
-                contactCount = await db.get('SELECT COUNT(*) as count FROM contacts WHERE session_id = ?', [sessionId]);
-                stickerCount = await db.get('SELECT COUNT(*) as count FROM stickers WHERE session_id = ?', [sessionId]);
-            } else {
-                msgCount = await db.get('SELECT COUNT(*) as count FROM messages');
-                contactCount = await db.get('SELECT COUNT(*) as count FROM contacts');
-                stickerCount = await db.get('SELECT COUNT(*) as count FROM stickers');
-            }
-
-            // Estimate session storage (rough estimate: messages * ~1KB for text + embedding)
-            const count = msgCount ? msgCount.count : 0;
-            const sizeMB = (count * 0.003).toFixed(2); // 3KB per message estimate
-
-            socket.emit('db_stats', {
-                sessionId,
-                messageCount: count,
-                stickerCount: (stickerCount ? stickerCount.count : 0),
-                sizeMb: sizeMB
-            });
-        } catch (e) {
-            console.error("Failed to get DB stats:", e);
-        }
-    });
-
-    socket.on('clear_database', async (sessionId) => {
-        try {
-            if (sessionId) {
-                await db.run('DELETE FROM messages WHERE session_id = ?', [sessionId]);
-                await db.run('DELETE FROM contacts WHERE session_id = ?', [sessionId]);
-                socket.emit('log', { sessionId, msg: "🧹 Local data for this session has been cleared." });
-            } else {
-                await db.run('DELETE FROM messages');
-                await db.run('DELETE FROM contacts');
-                socket.emit('log', { sessionId: 'SYSTEM', msg: "🧹 ENTIRE DATABASE CLEARED." });
-            }
-            // Trigger stats update
-            socket.emit('get_db_stats', sessionId);
-        } catch (e) {
-            console.error("Clear DB failed:", e);
-        }
-    });
-    socket.on('logout_session', async (id) => {
-        const s = sessions.get(id);
-        if (s) {
-            socket.emit('log', { sessionId: id, msg: "🔴 Logging out and clearing auth data..." });
-            try {
-                if (s.sock) s.sock.end(undefined);
-            } catch (e) { }
-            sessions.delete(id);
-            const authPath = `auth_baileys_${id}`;
-            try {
-                fs.rmSync(authPath, { recursive: true, force: true });
-                socket.emit('log', { sessionId: id, msg: "✅ Auth folder deleted. Rescan needed." });
-            } catch (e) {
-                console.error("Logout disk error:", e);
-            }
-            socket.emit('status', { sessionId: id, status: 'disconnected' });
-            socket.emit('session_deleted', id);
-        }
-    });
-
-    socket.on('resume_session', (id) => {
-        if (!id) return;
-        const s = sessions.get(id);
-        if (!s || !s.isConnected) {
-            socket.emit('log', { sessionId: id, msg: `🔌 Attempting to re-establish node: ${id}...` });
-            startSession(id);
-        } else {
-            socket.emit('log', { sessionId: id, msg: `✅ Node ${id} is already active.` });
-        }
-    });
-
-    socket.on('list_api_keys', () => {
-        socket.emit('api_keys_list', API_KEYS);
-    });
-
-    socket.on('add_api_key', async (key) => {
-        if (!key || API_KEYS.includes(key)) return;
-        API_KEYS.push(key);
-        await db.run(`UPDATE global_settings SET api_keys = ? WHERE id = 'settings'`, [API_KEYS.join(',')]);
-        socket.emit('api_keys_list', API_KEYS);
-        socket.emit('log', { sessionId: 'SYSTEM', msg: `🔑 New API Key Added. Total: ${API_KEYS.length}` });
-    });
-
-    socket.on('delete_api_key', async (key) => {
-        API_KEYS = API_KEYS.filter(k => k !== key);
-        await db.run(`UPDATE global_settings SET api_keys = ? WHERE id = 'settings'`, [API_KEYS.join(',')]);
-        socket.emit('api_keys_list', API_KEYS);
-        socket.emit('log', { sessionId: 'SYSTEM', msg: `🗑️ API Key Removed. Remaining: ${API_KEYS.length}` });
     });
 });
 
@@ -1975,25 +1692,26 @@ async function bootServer() {
     });
 
     await initDB();
-    await initLocalAI(); // Restored per user request
+    await initLocalAI();
 
+    // UNIFIED SESSION RECOVERY
     if (fs.existsSync('./data')) {
         const folders = fs.readdirSync('./data').filter(f => f.startsWith('auth_baileys_'));
+        console.log(`[SYSTEM] Recovering ${folders.length} accounts from persistent disk...`);
         for (const f of folders) {
-            const parts = f.replace('auth_baileys_', '').split('_');
+            const globalId = f.replace('auth_baileys_', '');
+            const parts = globalId.split('_');
             if (parts.length >= 2) {
                 const userId = parts[0];
                 const id = parts.slice(1).join('_');
-                if (userId && id) {
+                if (userId && id && !sessions.has(globalId)) {
+                    console.log(`[BOOT] Waking node: ${id} for user: ${userId}`);
                     startSession(userId, id);
-                    await delay(3000); // STAGGER BOOT TO PREVENT CONNECTION FLOODING
+                    await new Promise(r => setTimeout(r, 5000)); // Stagger connection to avoid bans
                 }
-            } else {
-                 console.log(`⚠️ Skipping legacy single-tenant directory during boot: ${f}`);
             }
         }
     }
-
 }
 
 bootServer();
