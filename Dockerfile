@@ -15,7 +15,7 @@ RUN npm install --production
 COPY . .
 
 # Ensure the data directory exists
-RUN mkdir -p /data
+RUN mkdir -p /app/data
 
 EXPOSE 3000
 
