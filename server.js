@@ -835,6 +835,24 @@ io.use((socket, next) => {
 
 const sessions = new Map();
 
+// --- PERSISTENCE: RECOVER SESSIONS FROM DISK ON BOOT ---
+function loadPersistedSessions() {
+    try {
+        const dataDir = './data';
+        if (!fs.existsSync(dataDir)) return;
+        const files = fs.readdirSync(dataDir);
+        const folders = files.filter(f => f.startsWith('auth_baileys_'));
+        console.log(`[SYSTEM] Found ${folders.length} archived sessions on disk. Restoring memory placeholders...`);
+        folders.forEach(f => {
+            const globalId = f.replace('auth_baileys_', '');
+            if (!sessions.has(globalId)) {
+                sessions.set(globalId, { isConnected: false, connectionState: 'disconnected', handshakeTimer: null });
+            }
+        });
+    } catch (e) { console.error("Session recovery failed:", e); }
+}
+loadPersistedSessions();
+
 function getSafeTimestamp(ts) {
     if (!ts) return Math.floor(Date.now() / 1000);
     if (typeof ts === 'object' && ts.low) return ts.low;
@@ -1622,11 +1640,13 @@ io.on('connection', (socket) => {
     socket.emit('log', { sessionId: 'SYSTEM', msg: 'System Connected. Token Authenticated.' });
 
     socket.on('list_sessions', () => {
-        const userSessions = Array.from(sessions.keys()).filter(k => k.startsWith(`${userId}_`));
+        if (!userId) return;
+        const userSessions = Array.from(sessions.keys()).filter(k => k && typeof k === 'string' && k.startsWith(`${userId}_`));
         socket.emit('session_list', userSessions.map(globalId => {
             const s = sessions.get(globalId);
+            const idPart = globalId.replace(`${userId}_`, '');
             return {
-                id: globalId.replace(`${userId}_`, ''),
+                id: idPart,
                 status: s.connectionState || (s.isConnected ? 'connected' : 'connecting')
             };
         }));
@@ -1638,6 +1658,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('resume_session', (id) => {
+        if (!id || !userId) return;
         const globalId = `${userId}_${id}`;
         if (!sessions.has(globalId)) {
             startSession(userId, id);
@@ -1650,7 +1671,8 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_session', (id) => { 
-        const userSessions = Array.from(sessions.keys()).filter(k => k.startsWith(`${userId}_`));
+        if (!id || !userId) return;
+        const userSessions = Array.from(sessions.keys()).filter(k => k && typeof k === 'string' && k.startsWith(`${userId}_`));
         if (userSessions.length >= 4) {
             socket.emit('log', { sessionId: id, msg: `🚫 Maximum 4 concurrent sessions allowed per account.` });
             return;
@@ -1663,11 +1685,16 @@ io.on('connection', (socket) => {
     });
 
     socket.on('delete_session', (id) => {
+        if (!id || !userId) return;
         const globalId = `${userId}_${id}`;
         const s = sessions.get(globalId); 
-        if (s) s.sock.end(undefined); 
+        if (s && s.sock) s.sock.end(undefined); 
         sessions.delete(globalId);
-        try { fs.rmSync(`auth_baileys_${globalId}`, { recursive: true, force: true }); } catch (e) { }
+        try { 
+            const path = `./data/auth_baileys_${globalId}`;
+            fs.rmSync(path, { recursive: true, force: true }); 
+            console.log(`[SYSTEM] Deleted persistent session folder: ${path}`);
+        } catch (e) { }
         socket.emit('session_deleted', id);
     });
 
