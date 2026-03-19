@@ -265,6 +265,10 @@ async function loadGlobalConfig() {
 
 // --- LOCAL AI MEMORY ENGINE (100% FREE & UNLIMITED) ---
 async function initLocalAI() {
+    if (process.env.FLY_APP_NAME) {
+        console.log("☁️ Running on Fly.io: Skipping memory-intensive Local AI Boot to save RAM.");
+        return;
+    }
     console.log("🧠 Booting Local AI Memory Engine (Downloads tiny model on first run)...");
     try {
         // This loads the industry-standard MiniLM model directly into your server's RAM
