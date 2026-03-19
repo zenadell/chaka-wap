@@ -1927,6 +1927,11 @@ io.on('connection', (socket) => {
 
 // --- BOOT SEQUENCE ---
 async function bootServer() {
+    const PORT = process.env.PORT || 3000;
+    server.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Server running and listening on http://0.0.0.0:${PORT}`);
+    });
+
     await initDB();
     await initLocalAI(); // Restored per user request
 
@@ -1947,9 +1952,6 @@ async function bootServer() {
         }
     }
 
-    server.listen(3000, '0.0.0.0', () => { 
-        console.log('🚀 Server running and listening on http://0.0.0.0:3000'); 
-    });
 }
 
 bootServer();

@@ -1,0 +1,9 @@
+node_modules
+.git
+data
+auth_baileys_*
+*.db
+.env
+.DS_Store
+venv_qwen
+server_log.txt
