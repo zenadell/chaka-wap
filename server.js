@@ -655,6 +655,7 @@ async function tryGeminiFailover(userId, sessionId, prompt) {
 
 // --- SERVER SETUP & AUTHENTICATION ---
 const app = express();
+app.set('trust proxy', 1); // Trust Fly.io proxy for HTTPS redirects
 app.use(express.json());
 const server = createServer(app);
 const io = new Server(server, {
