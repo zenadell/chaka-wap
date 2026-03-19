@@ -57,6 +57,11 @@ let CHAKA_MODEL = 'chaka-medium';
 const CHAKA_MODELS = ['chaka-ultimate', 'chaka-high', 'chaka-medium', 'chaka-low'];
 let db;
 
+// Ensure data directory exists for persistent storage
+if (!fs.existsSync('./data')) {
+    fs.mkdirSync('./data');
+}
+
 function initGlobalState() {
     API_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "AIzaSyATiIO8ouylB0mwhueHgu05gO2HpJaj3V4").split(',');
     ACTIVE_API = process.env.ACTIVE_API || 'openrouter';
@@ -137,7 +142,7 @@ function recordMessage(contactId, tokens) {
 // --- DATABASE INITIALIZATION (SQLITE) ---
 async function initDB() {
     db = await open({
-        filename: path.join(__dirname, 'chaka_data.db'), // THIS IS YOUR ENTIRE UNLIMITED DATABASE FILE!
+        filename: './data/chaka_data.db', // THIS IS YOUR ENTIRE UNLIMITED DATABASE FILE!
         driver: sqlite3.Database
     });
 
@@ -1270,7 +1275,7 @@ async function startSession(userId, sessionId) {
     sessions.set(globalId, { isConnected: false, connectionState: 'connecting', handshakeTimer: null });
 
     console.log(`🚀 Starting Session: ${sessionId} for User: ${userId.substring(0,8)}...`);
-    const authPath = `auth_baileys_${globalId}`;
+    const authPath = `./data/auth_baileys_${globalId}`;
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
 
     // Use a verified latest version directly to avoid 405/rejections
@@ -1925,8 +1930,8 @@ async function bootServer() {
     await initDB();
     await initLocalAI(); // Restored per user request
 
-    if (fs.existsSync('.')) {
-        const folders = fs.readdirSync('.').filter(f => f.startsWith('auth_baileys_'));
+    if (fs.existsSync('./data')) {
+        const folders = fs.readdirSync('./data').filter(f => f.startsWith('auth_baileys_'));
         for (const f of folders) {
             const parts = f.replace('auth_baileys_', '').split('_');
             if (parts.length >= 2) {
