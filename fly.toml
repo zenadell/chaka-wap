@@ -12,7 +12,7 @@ primary_region = "lhr"
 
 [[mounts]]
   source = "chaka_data"
-  destination = "/data"
+  destination = "/app/data"
 
 [env]
   PORT = "3000"
