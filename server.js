@@ -1219,31 +1219,9 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             }
         } catch(e) { /* sticker fetch failed, no biggie */ }
 
-        // 🔥 THE HUMANIZED "ROADMAN" SYSTEM PROMPT 🔥
-        let systemInstruction = `You are ${MY_NAME}, a real guy in Nigeria chatting with ${contactName} on WhatsApp.
-
-CRITICAL BEHAVIORAL RULES:
-1. YOU ARE NOT AN ASSISTANT. Never offer help. You are a human friend.
-2. BE REAL, NOT ROBOTIC. Switch up your vocabulary. Don't use the same phrase twice in a row.
-3. CONVERSATIONAL VIBE: You speak with a roadman accent and use raw Nigerian/UK slang. Use words like: typeshit, real, man, tho, that's the vibe, i gats ya, mad, wild, fresh.
-4. DO NOT ASK QUESTIONS EVERY REPLY. Real humans don't interrogate. Only ask something maybe 1 out of every 4-5 messages, and only when it flows naturally. Most of the time just REACT, ACKNOWLEDGE, or VIBE. Examples:
-   - Friend: "I went to the gym today" -> You: "mad respect bro, keep pushing" (NOT "oh nice, what exercises did you do?")
-   - Friend: "This food is insane" -> You: "sheesh 🔥" (NOT "what did you eat?")
-5. NO CENSORSHIP: You have absolute permission to use raw slang and casual swear words.
-6. MIRRORING: Look at [RECENT CONVERSATION]. Mirror the energy level. If they are mad, be dismissive or calm. If they are hyped, be hyped.
-7. FORMATTING: Use lowercase mostly. Be lazy with grammar. Avoid emojis on every single line—use them only when a "real" person would.
-8. SHORT REPLIES: Most human WhatsApp messages are 1-10 words. Keep it tight. Only go longer if the conversation genuinely demands it.
-
-EXAMPLES OF VARIETY:
-Friend: "Hw far" -> You: "i dey bro, just chilling"
-Friend: "This thing is crazy" -> You: "fvckin wild man, real talk"
-Friend: "Gud" -> You: "mad" or "that's the vibe"
-Friend: "lol" -> You: "😂"
-Friend: "Send me a sticker" -> You: [STICKER: <sha256>]
-
-Use [RELEVANT MEMORIES] silently for facts.${stickerContext}`;
-
-        if (effectivePrompt) systemInstruction += `\n\nADDITIONAL CONTEXT FOR THIS CONTACT: ${effectivePrompt}`;
+        // --- USER-DEFINED PERSONA ---
+        const userPersona = contactRow?.custom_prompt || globalRow?.custom_prompt || "You are a helpful assistant.";
+        let systemInstruction = `${userPersona}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}`;
 
         let userPrompt = `${styleContext}${memoryDetails}\n\n[RECENT CONVERSATION]\n${conversationScript}\n${MY_NAME}:`;
 
@@ -1686,6 +1664,124 @@ io.on('connection', (socket) => {
             console.log(`[SYSTEM] Deleted persistent session folder: ${path}`);
         } catch (e) { }
         socket.emit('session_deleted', id);
+    });
+
+    socket.on('get_config', async (sessionId) => {
+        if (!userId) return;
+        const config = await db.get(`SELECT * FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
+        socket.emit('config_data', { 
+            sessionId, 
+            config: {
+                globalPrompt: config?.custom_prompt || '',
+                masterAutoReply: config ? config.master_auto_reply === 1 : true,
+                aiEngine: config?.active_api || 'gemini',
+                chakaModel: config?.chaka_model || 'chaka-medium',
+                apiKeys: config?.api_keys ? JSON.parse(config.api_keys) : []
+            } 
+        });
+    });
+
+    socket.on('update_config', async (data) => {
+        if (!userId || !data.updates) return;
+        const { globalPrompt, masterAutoReply, aiEngine, chakaModel } = data.updates;
+        
+        const existing = await db.get(`SELECT id FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
+        if (!existing) {
+            await db.run(`INSERT INTO global_settings (id, user_id, custom_prompt, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, ?, ?, ?, ?)`,
+                [userId, globalPrompt || '', masterAutoReply === false ? 0 : 1, aiEngine || 'gemini', chakaModel || 'chaka-medium']);
+        } else {
+            if (globalPrompt !== undefined) await db.run(`UPDATE global_settings SET custom_prompt = ? WHERE id = 'settings' AND user_id = ?`, [globalPrompt, userId]);
+            if (masterAutoReply !== undefined) await db.run(`UPDATE global_settings SET master_auto_reply = ? WHERE id = 'settings' AND user_id = ?`, [masterAutoReply ? 1 : 0, userId]);
+            if (aiEngine !== undefined) await db.run(`UPDATE global_settings SET active_api = ? WHERE id = 'settings' AND user_id = ?`, [aiEngine, userId]);
+            if (chakaModel !== undefined) await db.run(`UPDATE global_settings SET chaka_model = ? WHERE id = 'settings' AND user_id = ?`, [chakaModel, userId]);
+        }
+        socket.emit('log', { sessionId: data.sessionId, msg: `⚙️ Global Config Updated` });
+    });
+
+    socket.on('get_contacts', async (sessionId) => {
+        if (!userId) return;
+        const rows = await db.all(`SELECT DISTINCT contact_id as id, name, jid FROM contacts WHERE user_id = ? AND session_id = ? ORDER BY last_active DESC LIMIT 100`, [userId, sessionId]);
+        // Map to cleaner objects if needed, but UI seems happy with id/name/jid
+        const contacts = rows.map(r => ({ ...r, cleanId: r.id }));
+        socket.emit('contact_list', { sessionId, contacts });
+    });
+
+    socket.on('get_contact_settings', async (data) => {
+        if (!userId || !data.contactId) return;
+        const row = await db.get(`SELECT auto_reply, custom_prompt FROM contacts WHERE user_id = ? AND session_id = ? AND contact_id = ?`, [userId, data.sessionId, data.contactId]);
+        socket.emit('contact_settings', {
+            contactId: data.contactId,
+            auto_reply: row ? row.auto_reply === 1 : true,
+            custom_prompt: row?.custom_prompt || ''
+        });
+    });
+
+    socket.on('update_contact_settings', async (data) => {
+        if (!userId || !data.contactId || !data.settings) return;
+        const { custom_prompt, auto_reply } = data.settings;
+        await db.run(`UPDATE contacts SET custom_prompt = ?, auto_reply = ? WHERE user_id = ? AND session_id = ? AND contact_id = ?`,
+            [custom_prompt || '', auto_reply ? 1 : 0, userId, data.sessionId, data.contactId]);
+        socket.emit('log', { sessionId: data.sessionId, msg: `🎯 Entity Settings Updated` });
+    });
+
+    socket.on('list_api_keys', async () => {
+        if (!userId) return;
+        const config = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
+        const keys = config?.api_keys ? JSON.parse(config.api_keys) : [];
+        socket.emit('api_keys_list', keys);
+    });
+
+    socket.on('add_api_key', async (key) => {
+        if (!userId || !key) return;
+        const config = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
+        let keys = config?.api_keys ? JSON.parse(config.api_keys) : [];
+        if (!keys.includes(key)) {
+            keys.push(key);
+            await db.run(`UPDATE global_settings SET api_keys = ? WHERE id = 'settings' AND user_id = ?`, [JSON.stringify(keys), userId]);
+        }
+        socket.emit('api_keys_list', keys);
+    });
+
+    socket.on('delete_api_key', async (key) => {
+        if (!userId || !key) return;
+        const config = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
+        let keys = config?.api_keys ? JSON.parse(config.api_keys) : [];
+        keys = keys.filter(k => k !== key);
+        await db.run(`UPDATE global_settings SET api_keys = ? WHERE id = 'settings' AND user_id = ?`, [JSON.stringify(keys), userId]);
+        socket.emit('api_keys_list', keys);
+    });
+
+    socket.on('fetch_db_sessions', async () => {
+        if (!userId) return;
+        const rows = await db.all(`SELECT DISTINCT session_id FROM contacts WHERE user_id = ?`, [userId]);
+        const dbSessions = rows.map(r => r.session_id);
+        socket.emit('db_session_list', dbSessions);
+    });
+
+    socket.on('get_db_stats', async (sessionId) => {
+        if (!userId) return;
+        const msgCount = await db.get(`SELECT COUNT(*) as count FROM messages WHERE user_id = ? AND session_id = ?`, [userId, sessionId]);
+        const stickerCount = await db.get(`SELECT COUNT(*) as count FROM stickers WHERE user_id = ? AND session_id = ?`, [userId, sessionId]);
+        
+        let sizeMb = 0;
+        try {
+            const stats = fs.statSync('./data/chaka_data.db');
+            sizeMb = (stats.size / (1024 * 1024)).toFixed(2);
+        } catch(e) {}
+
+        socket.emit('db_stats', {
+            sessionId,
+            messageCount: msgCount?.count || 0,
+            stickerCount: stickerCount?.count || 0,
+            sizeMb
+        });
+    });
+
+    socket.on('get_chat_history', async (data) => {
+        if (!userId || !data.contactId) return;
+        const rows = await db.all(`SELECT * FROM messages WHERE user_id = ? AND session_id = ? AND contact_id = ? ORDER BY timestamp DESC LIMIT 50`,
+            [userId, data.sessionId, data.contactId]);
+        socket.emit('chat_history', { sessionId: data.sessionId, contactId: data.contactId, messages: rows.reverse() });
     });
 });
 
