@@ -3,127 +3,1099 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Temple's Data Collector</title>
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no font-weight: normal;">
+    <title>Chaka Enterprise</title>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Poppins', 'sans-serif'],
+                        mono: ['Courier New', 'monospace'],
+                    },
+                    colors: {
+                        base: '#18181A',
+                        card: '#222224',
+                        cardHover: '#2A2A2D',
+                        heroBrown: '#3C231D',
+                        brandOrange: '#FC5A38',
+                        brandOrangeHover: '#E04A2A',
+                        textMuted: '#A1A1AA',
+                        borderMuted: '#333333'
+                    },
+                    screens: {
+                        'xs': '475px',
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        body {
-            background-color: #0f172a;
-            color: #e2e8f0;
-            font-family: 'Courier New', Courier, monospace;
+        * {
+            -webkit-tap-highlight-color: transparent;
         }
 
-        .log-entry {
-            border-bottom: 1px solid #1e293b;
-            padding: 4px 0;
+        body {
+            background-color: #18181A;
+            color: #FFFFFF;
+            /* Better mobile viewport handling */
+            height: 100vh;
+            height: 100dvh;
+            /* Dynamic viewport height for mobile */
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+
+        /* Minimalist Scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #333333;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4D4D4D;
+        }
+
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .loader-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(24, 24, 26, 0.95);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            backdrop-filter: blur(4px);
+        }
+
+        .spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid #333;
+            border-top: 3px solid #FC5A38;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Form element overrides */
+        input:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #FC5A38;
+        }
+
+        select option {
+            background-color: #222224;
+            color: #fff;
+        }
+
+        /* Prevent text zoom on iOS */
+        @supports (-webkit-touch-callout: none) {
+
+            input,
+            textarea,
+            select {
+                font-size: 16px;
+            }
+        }
+
+        /* Safe area insets for notched phones */
+        .safe-top {
+            padding-top: env(safe-area-inset-top);
+        }
+
+        .safe-bottom {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        .safe-left {
+            padding-left: env(safe-area-inset-left);
+        }
+
+        .safe-right {
+            padding-right: env(safe-area-inset-right);
+        }
+
+        /* Improved touch targets */
+        .touch-target {
+            min-height: 44px;
+            min-width: 44px;
+        }
+
+        /* Smooth transitions */
+        .sidebar-transition {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Better focus visible for accessibility */
+        button:focus-visible,
+        input:focus-visible,
+        select:focus-visible,
+        textarea:focus-visible {
+            outline: 2px solid #FC5A38;
+            outline-offset: 2px;
+        }
+
+        /* Responsive typography scaling */
+        .responsive-text-xs {
+            font-size: clamp(10px, 2.5vw, 11px);
+        }
+
+        .responsive-text-sm {
+            font-size: clamp(11px, 3vw, 13px);
+        }
+
+        .responsive-text-base {
+            font-size: clamp(13px, 3.5vw, 15px);
+        }
+
+        .responsive-text-lg {
+            font-size: clamp(16px, 4vw, 20px);
+        }
+
+        .responsive-text-xl {
+            font-size: clamp(20px, 5vw, 26px);
+        }
+
+        /* Prevent horizontal overflow */
+        .no-overflow-x {
+            overflow-x: hidden;
+            max-width: 100vw;
         }
     </style>
 </head>
 
-<body class="p-10">
+<body class="flex h-screen h-dvh antialiased selection:bg-brandOrange/30 relative no-overflow-x">
 
-    <div class="max-w-4xl mx-auto">
-        <header class="mb-8 border-b border-green-500 pb-4 flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-bold text-green-400">WhatsApp Data Extractor</h1>
-                <p class="text-sm text-gray-400">Chaka AI Training Module</p>
+    <!-- Loader -->
+    <div id="global-loader" class="loader-overlay">
+        <div class="spinner mb-4"></div>
+        <div class="text-brandOrange text-sm font-semibold tracking-wide">Syncing Data...</div>
+    </div>
+
+    <!-- Mobile Overlay -->
+    <div id="mobile-overlay"
+        class="fixed inset-0 bg-black/70 z-40 hidden backdrop-blur-sm transition-opacity duration-300 opacity-0"
+        onclick="closeMenus()"></div>
+
+    <!-- Left Sidebar -->
+    <aside id="left-sidebar"
+        class="fixed lg:relative inset-y-0 left-0 z-50 w-[280px] sm:w-[300px] bg-base flex flex-col h-full shrink-0 border-r border-borderMuted p-4 sm:p-6 transform -translate-x-full lg:translate-x-0 sidebar-transition shadow-2xl lg:shadow-none safe-left">
+
+        <div class="flex items-center justify-between mb-8 pl-2 shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-full bg-brandOrange flex items-center justify-center shrink-0">
+                    <i class="fab fa-whatsapp text-white text-base"></i>
+                </div>
+                <h1 class="text-xl font-bold tracking-tight text-white">chaka</h1>
             </div>
-            <div id="status-badge" class="px-4 py-2 bg-yellow-600 rounded text-xs font-bold uppercase">Disconnected
+            <button onclick="closeMenus()"
+                class="lg:hidden touch-target w-10 h-10 flex items-center justify-center rounded-full bg-card text-textMuted hover:text-white border border-borderMuted transition-colors">
+                <i class="fas fa-times text-sm"></i>
+            </button>
+        </div>
+
+        <div class="flex flex-col gap-1 flex-1 overflow-y-auto scrollbar-hide min-h-0" id="session-list">
+        </div>
+
+        <div class="mt-4 bg-brandOrange rounded-[24px] p-5 sm:p-6 text-base relative overflow-hidden shrink-0">
+            <div class="relative z-10 flex flex-col items-start gap-3">
+                <h3 class="font-bold text-white text-lg leading-tight">Add Node<br>or API Key</h3>
+                <div class="flex gap-2 w-full">
+                    <button onclick="createNewSession()"
+                        class="flex-1 touch-target bg-black/20 hover:bg-black/40 text-white rounded-full py-3 transition-colors flex items-center justify-center">
+                        <i class="fas fa-plus text-sm"></i>
+                    </button>
+                    <button onclick="manageApiKeys()"
+                        class="flex-1 touch-target bg-black/20 hover:bg-black/40 text-white rounded-full py-3 transition-colors flex items-center justify-center">
+                        <i class="fas fa-key text-sm"></i>
+                    </button>
+                </div>
             </div>
+            <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none">
+            </div>
+        </div>
+
+        <!-- User Profile & Logout -->
+        <div class="mt-4 pt-4 border-t border-borderMuted flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-3 overflow-hidden">
+                <div class="w-8 h-8 rounded-full bg-card border border-borderMuted flex items-center justify-center shrink-0">
+                    <i class="fas fa-user text-textMuted text-xs"></i>
+                </div>
+                <div class="flex flex-col min-w-0">
+                    <span id="userNameDisplay" class="text-sm font-medium text-white truncate">User</span>
+                    <span id="userRoleDisplay" class="text-[10px] text-textMuted uppercase tracking-wider truncate">Standard</span>
+                </div>
+            </div>
+            <button onclick="logoutApp()" class="touch-target w-8 h-8 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-400/10 transition-colors shrink-0" title="Logout">
+                <i class="fas fa-sign-out-alt text-sm"></i>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-base safe-right">
+
+        <!-- Mobile Header -->
+        <header
+            class="lg:hidden flex justify-between items-center p-3 sm:p-4 border-b border-borderMuted bg-base z-30 shrink-0 safe-top">
+            <button onclick="toggleLeftMenu()"
+                class="touch-target text-white w-10 h-10 rounded-full bg-card hover:bg-cardHover border border-borderMuted transition-colors flex items-center justify-center shrink-0">
+                <i class="fas fa-bars text-sm"></i>
+            </button>
+            <h1 class="font-bold text-lg text-white truncate px-2">chaka</h1>
+            <button onclick="toggleRightMenu()"
+                class="touch-target text-brandOrange w-10 h-10 rounded-full bg-card hover:bg-cardHover border border-borderMuted transition-colors flex items-center justify-center relative shrink-0">
+                <i class="fas fa-bolt text-sm"></i>
+                <span id="mobile-status-dot"
+                    class="absolute top-1 right-1 w-2.5 h-2.5 bg-gray-500 rounded-full border-2 border-card"></span>
+            </button>
         </header>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <!-- Content Wrapper -->
+        <div class="flex-1 flex flex-col xl:flex-row overflow-hidden relative">
+            <main class="flex-1 flex flex-col p-4 sm:p-6 md:p-8 overflow-y-auto scrollbar-hide pb-24 xl:pb-8">
 
-            <div>
-                <div id="qr-container"
-                    class="bg-white p-4 rounded-lg shadow-lg w-64 h-64 flex items-center justify-center mx-auto mb-6">
-                    <p class="text-black text-center text-sm">Waiting for QR...</p>
+                <!-- Page Header -->
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 md:mb-8">
+                    <div>
+                        <div class="text-textMuted text-xs md:text-sm mb-1 font-medium">Session Manager</div>
+                        <div class="flex items-center gap-3">
+                            <h2 id="current-session-name" class="text-xl md:text-2xl font-bold text-white">Select Node
+                            </h2>
+                            <div id="status-badge"
+                                class="px-3 py-1 rounded-full bg-card border border-borderMuted text-[10px] md:text-xs font-bold text-textMuted flex items-center gap-2 tracking-wide transition-all">
+                                <span class="w-2 h-2 rounded-full bg-gray-500"></span> Offline
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        class="flex items-center gap-4 bg-card px-5 py-3 rounded-2xl border border-borderMuted w-full sm:w-auto shrink-0 shadow-sm">
+                        <span class="text-xs font-bold text-white/80">Master Auto-Reply</span>
+                        <label class="relative inline-flex items-center cursor-pointer ml-auto">
+                            <input type="checkbox" id="master-toggle" class="sr-only peer" onchange="toggleMaster()">
+                            <div
+                                class="w-11 h-6 bg-base rounded-full border border-borderMuted peer-focus:outline-none peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[4px] after:start-[4px] after:bg-textMuted peer-checked:after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brandOrange peer-checked:border-brandOrange">
+                            </div>
+                        </label>
+                    </div>
                 </div>
 
-                <div class="bg-slate-800 p-4 rounded-lg h-64 overflow-y-auto border border-slate-700">
-                    <h3 class="text-xs font-bold text-gray-500 mb-2 uppercase">System Logs</h3>
-                    <div id="logs" class="text-xs space-y-1"></div>
-                </div>
-            </div>
+                <!-- Global Logic Engine -->
+                <div id="control-panel"
+                    class="bg-heroBrown rounded-[28px] md:rounded-[36px] p-6 md:p-8 mb-8 flex flex-col xl:flex-row items-center xl:items-start justify-center xl:justify-between gap-8 lg:gap-12 opacity-50 pointer-events-none transition-opacity duration-300 border border-brandOrange/10 shadow-xl overflow-hidden w-full max-w-full">
 
-            <div>
-                <h2 class="text-xl font-bold mb-4 text-green-400">Live Data Stream</h2>
-                <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
-                    <table class="w-full text-sm text-left">
-                        <thead class="text-xs uppercase bg-slate-900 text-gray-400">
-                            <tr>
-                                <th class="px-6 py-3">Contact Name</th>
-                                <th class="px-6 py-3">Status</th>
-                                <th class="px-6 py-3 text-right">Msgs Saved</th>
-                            </tr>
-                        </thead>
-                        <tbody id="contact-list">
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                    <div class="w-full xl:flex-1 flex flex-col h-full min-w-0">
+                        <h3 class="text-lg md:text-xl font-bold mb-4 text-center xl:text-left text-white/90">Global
+                            Persona</h3>
+                        <textarea id="global-prompt" rows="4"
+                            class="w-full bg-black/20 border border-black/10 rounded-[20px] p-5 text-[15px] text-white placeholder-white/40 resize-none font-medium focus:border-brandOrange/60 focus:ring-1 focus:ring-brandOrange/60 transition-all outline-none"
+                            placeholder="Core intelligence instructions..."></textarea>
 
+                        <button onclick="saveGlobal()"
+                            class="mt-6 bg-brandOrange hover:bg-brandOrangeHover text-white font-bold rounded-full px-12 py-4 w-full sm:w-fit transition-all text-[15px] flex items-center justify-center gap-2 shadow-lg hover:scale-[1.02] active:scale-95 mx-auto xl:mx-0 whitespace-nowrap">
+                            Compile Persona <i class="fas fa-microchip"></i>
+                        </button>
+                    </div>
+
+                    <div
+                        class="w-full sm:w-[320px] xl:w-[360px] max-w-full flex flex-col gap-4 shrink-0 bg-black/10 p-5 rounded-[28px] border border-white/5 mx-auto xl:mx-0">
+                        <div class="bg-white/5 rounded-[20px] p-1.5 flex gap-1 flex-wrap">
+                            <button id="engine-gemini" onclick="switchEngine('gemini')"
+                                class="flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]">Gemini
+                                Pro</button>
+                            <button id="engine-chaka" onclick="switchEngine('chaka')"
+                                class="flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]">V5
+                                Engine</button>
+                            <button id="engine-openrouter" onclick="switchEngine('openrouter')"
+                                class="flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]">Qwen
+                                Cloud</button>
+                            <button id="engine-qwen" onclick="switchEngine('qwen')"
+                                class="flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]">Qwen
+                                Local</button>
+                        </div>
+
+                        <div id="chaka-options" class="hidden animate-fade-in">
+                            <select id="chaka-model-select"
+                                class="w-full bg-base border border-borderMuted rounded-[18px] p-3.5 text-xs text-white font-bold cursor-pointer outline-none focus:border-brandOrange/60 transition-all appearance-none">
+                                <option value="chaka-low">Chaka Velocity</option>
+                                <option value="chaka-medium">Chaka Core</option>
+                                <option value="chaka-high">Chaka Reasoning</option>
+                                <option value="chaka-ultimate">Chaka Ultra</option>
+                            </select>
+                        </div>
+
+                        <button onclick="saveAiConfig()"
+                            class="w-full bg-card hover:bg-cardHover border border-borderMuted text-white font-bold rounded-[18px] py-4 transition-all text-xs shadow-sm hover:scale-[1.02] active:scale-95">
+                            Deploy AI Config
+                        </button>
+
+                        <button onclick="triggerSelfTrain()"
+                            class="w-full bg-brandOrange/10 hover:bg-brandOrange/20 border border-brandOrange/30 text-brandOrange font-bold rounded-[18px] py-4 transition-all text-xs flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95">
+                            <i class="fas fa-brain"></i> Index Node History
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Scan Section -->
+                <div id="qr-section"
+                    class="bg-card rounded-[32px] p-10 mb-8 flex flex-col items-center justify-center hidden border border-borderMuted shadow-inner max-w-2xl mx-auto w-full">
+                    <div id="qr-container"
+                        class="bg-white p-5 rounded-3xl w-52 h-52 sm:w-64 sm:h-64 flex items-center justify-center mb-6 shadow-2xl">
+                        <p class="text-black text-sm font-bold">Initializing...</p>
+                    </div>
+                    <p class="text-textMuted text-sm font-semibold">Connect Node: <span id="qr-target-name"
+                            class="text-brandOrange ml-1 underline decoration-2">...</span></p>
+                </div>
+
+                <!-- Target Configuration -->
+                <div id="settings-area" class="flex-1 flex flex-col min-h-0">
+                    <div
+                        class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 sticky top-0 bg-base z-10 py-2">
+                        <h3 class="text-sm md:text-lg font-bold text-white flex items-center gap-3">
+                            <div
+                                class="w-8 h-8 rounded-full bg-card border border-borderMuted flex items-center justify-center text-brandOrange">
+                                <i class="fas fa-bullseye text-[10px]"></i>
+                            </div>
+                            Target Intelligence
+                        </h3>
+
+                        <div
+                            class="w-full sm:w-auto sm:max-w-sm bg-card rounded-[16px] sm:rounded-[20px] border border-borderMuted flex items-center px-3 sm:px-4 overflow-hidden focus-within:border-[rgba(252,90,56,0.6)] focus-within:ring-1 focus-within:ring-[rgba(252,90,56,0.6)] transition-all">
+                            <select id="contact-select" onchange="loadSettings()"
+                                class="w-full bg-transparent border-none p-2.5 sm:p-3.5 text-xs sm:text-sm font-semibold text-white appearance-none cursor-pointer outline-none">
+                                <option value="">Select target entity...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="settings-panel"
+                        class="hidden flex-1 flex flex-col gap-6 overflow-y-auto no-scrollbar pb-10">
+
+                        <div
+                            class="bg-card/50 rounded-[28px] p-6 border border-borderMuted/50 grid grid-cols-1 lg:grid-cols-12 gap-6">
+                            <div class="lg:col-span-8 flex flex-col gap-4">
+                                <div>
+                                    <h4 class="font-bold text-sm text-white/90 mb-1">Entity Logic Overrides</h4>
+                                    <p class="text-[11px] text-textMuted mb-3 uppercase tracking-wider font-bold">
+                                        Specific intelligence bypass</p>
+                                </div>
+                                <textarea id="custom-prompt" rows="3"
+                                    class="w-full bg-card border border-borderMuted rounded-[16px] sm:rounded-[20px] p-3 sm:p-5 text-sm sm:text-[15px] font-medium resize-none focus:border-[rgba(252,90,56,0.6)] focus-within:ring-1 focus-within:ring-[rgba(252,90,56,0.6)] transition-all outline-none"
+                                    placeholder="Enter target-specific logic..."></textarea>
+                            </div>
+
+                            <div class="lg:col-span-4 flex flex-col gap-3 justify-end">
+                                <div
+                                    class="bg-base rounded-2xl p-4 border border-borderMuted/30 flex items-center justify-between mb-2">
+                                    <div class="flex items-center gap-3">
+                                        <div
+                                            class="w-9 h-9 rounded-full bg-brandOrange/10 border border-brandOrange/20 flex items-center justify-center text-brandOrange">
+                                            <i class="fas fa-robot text-xs"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-[11px] font-bold text-white">Auto-Pilot</p>
+                                            <p class="text-[9px] text-textMuted">Autonomous Mode</p>
+                                        </div>
+                                    </div>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" id="auto-reply-toggle" class="sr-only peer">
+                                        <div
+                                            class="w-9 h-5 bg-card rounded-full border border-borderMuted peer-focus:outline-none peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-textMuted peer-checked:after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brandOrange peer-checked:border-brandOrange">
+                                        </div>
+                                    </label>
+                                </div>
+                                <button onclick="saveSettings()"
+                                    class="w-full bg-brandOrange hover:bg-brandOrangeHover text-white font-bold rounded-2xl py-3.5 transition-all text-xs shadow-sm active:scale-95">
+                                    Save Entity Config
+                                </button>
+                                <button id="manual-scrape-btn" onclick="manualScrape()"
+                                    class="w-full bg-card hover:bg-cardHover border border-borderMuted text-white font-bold rounded-2xl py-3.5 transition-all text-xs flex items-center justify-center gap-2 active:scale-95">
+                                    <i class="fas fa-satellite"></i> Fetch Local Data
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="flex-1 flex flex-col min-h-[400px]">
+                            <div class="flex items-center justify-between mb-4">
+                                <h4 class="font-bold text-xs text-textMuted uppercase tracking-[3px]">Observation Window
+                                </h4>
+                                <div class="flex gap-1.5">
+                                    <div class="w-1.5 h-1.5 rounded-full bg-[#10b981]"></div>
+                                    <div class="w-1.5 h-1.5 rounded-full bg-[#10b981] opacity-50"></div>
+                                    <div class="w-1.5 h-1.5 rounded-full bg-[#10b981] opacity-20"></div>
+                                </div>
+                            </div>
+                            <div id="chat-history"
+                                class="flex-1 bg-card/30 rounded-[32px] p-5 sm:p-7 overflow-y-auto space-y-4 text-sm font-medium border border-borderMuted/30 custom-scrollbar safe-bottom min-h-[400px]">
+                                <div class="h-full flex flex-col items-center justify-center opacity-30 gap-4">
+                                    <i class="fas fa-inbox text-4xl"></i>
+                                    <p class="text-xs font-bold tracking-widest uppercase">Stream Ready</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Right Sidebar / Telemetry -->
+            <aside id="right-sidebar"
+                class="fixed xl:relative inset-y-0 right-0 z-50 w-[85%] sm:w-[380px] xl:w-[340px] 2xl:w-[380px] bg-base xl:border-l border-borderMuted p-4 sm:p-6 md:p-8 flex flex-col gap-4 sm:gap-6 transform translate-x-full xl:translate-x-0 sidebar-transition shrink-0 h-full overflow-y-auto scrollbar-hide shadow-2xl xl:shadow-none safe-right">
+
+                <div class="flex items-center justify-between xl:hidden mb-2 shrink-0">
+                    <h3 class="font-bold text-lg text-white">Telemetry</h3>
+                    <button onclick="closeMenus()"
+                        class="w-10 h-10 rounded-full bg-card border border-borderMuted text-textMuted flex items-center justify-center">
+                        <i class="fas fa-times text-sm"></i>
+                    </button>
+                </div>
+
+                <!-- Health Cards -->
+                <div class="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
+                    <div
+                        class="bg-card rounded-[24px] p-4 border border-borderMuted/50 hover:border-brandOrange/30 transition-colors shadow-sm">
+                        <div
+                            class="w-8 h-8 rounded-full bg-brandOrange/10 flex items-center justify-center text-brandOrange mb-3 border border-brandOrange/20">
+                            <i class="fas fa-database text-[10px]"></i>
+                        </div>
+                        <p class="text-[10px] text-textMuted font-bold uppercase tracking-wider mb-1">Index Size</p>
+                        <h4 id="db-size" class="text-lg font-bold text-white flex items-end gap-1">0 <span
+                                class="text-[10px] text-textMuted font-bold mb-1">MB</span></h4>
+                    </div>
+                    <div
+                        class="bg-card rounded-[24px] p-4 border border-borderMuted/50 hover:border-[#10b981]/30 transition-colors shadow-sm">
+                        <div
+                            class="w-8 h-8 rounded-full bg-[#10b981]/10 flex items-center justify-center text-[#10b981] mb-3 border border-[#10b981]/20">
+                            <i class="fas fa-ghost text-[10px]"></i>
+                        </div>
+                        <p class="text-[10px] text-textMuted font-bold uppercase tracking-wider mb-1">Stickers</p>
+                        <h4 id="db-sticker-count" class="text-lg font-bold text-white">0</h4>
+                    </div>
+                </div>
+
+                <div
+                    class="bg-heroBrown/40 rounded-[24px] p-4 border border-brandOrange/20 flex items-center justify-between shrink-0">
+                    <div class="flex items-center gap-3">
+                        <div
+                            class="w-10 h-10 rounded-full bg-brandOrange flex items-center justify-center text-white shadow-lg">
+                            <i class="fas fa-envelope-open-text text-xs"></i>
+                        </div>
+                        <div>
+                            <h4 id="db-msg-count" class="text-lg font-bold text-white leading-tight">0</h4>
+                            <p id="db-contact-stats"
+                                class="text-[9px] text-white/50 font-bold uppercase tracking-tighter">Messages Indexed
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex flex-col items-end">
+                        <span class="w-2 h-2 rounded-full bg-brandOrange animate-ping"></span>
+                    </div>
+                </div>
+
+                <!-- Terminal Output -->
+                <div class="flex-1 flex flex-col min-h-[300px] gap-3">
+                    <div class="flex items-center justify-between px-1">
+                        <h4 class="text-[10px] text-textMuted font-bold uppercase tracking-[3px]">Live Data Stream</h4>
+                        <span
+                            class="text-[9px] bg-brandOrange/10 text-brandOrange px-2 py-0.5 rounded-full font-bold border border-brandOrange/20">REALTIME</span>
+                    </div>
+
+                    <div id="db-feed"
+                        class="flex-1 bg-card/30 rounded-[28px] p-4 border border-borderMuted/50 overflow-y-auto scrollbar-hide text-[11px] font-medium space-y-3 custom-scrollbar">
+                        <div class="text-textMuted text-center mt-20 opacity-50">
+                            <i class="fas fa-satellite-dish text-2xl mb-3 block"></i>
+                            Waiting for activity...
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between px-1 mt-2">
+                        <h4 class="text-[10px] text-textMuted font-bold uppercase tracking-[3px]">System Logs</h4>
+                    </div>
+                    <div id="logs"
+                        class="h-32 bg-base rounded-2xl p-4 border border-borderMuted/30 font-mono text-[9px] overflow-y-auto scrollbar-hide text-textMuted leading-loose">
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="grid grid-cols-2 gap-3 shrink-0 pt-2">
+                    <button onclick="clearDatabase()"
+                        class="bg-card hover:bg-cardHover border border-borderMuted text-textMuted hover:text-[#fc5a38] p-3 rounded-2xl text-[10px] font-bold transition-all flex items-center justify-center gap-2">
+                        <i class="fas fa-trash-alt"></i> Purge
+                    </button>
+                    <button onclick="logoutSession()"
+                        class="bg-card hover:bg-cardHover border border-borderMuted text-textMuted hover:text-white p-3 rounded-2xl text-[10px] font-bold transition-all flex items-center justify-center gap-2">
+                        <i class="fas fa-power-off"></i> Logout
+                    </button>
+                </div>
+
+                <button onclick="testInject()"
+                    class="w-full bg-base border border-borderMuted text-textMuted hover:bg-card hover:text-white p-3 rounded-2xl text-[10px] font-bold transition-all flex items-center justify-center gap-2 mb-safe-bottom">
+                    <i class="fas fa-vial"></i> Test Probe Logic
+                </button>
+            </aside>
         </div>
     </div>
 
     <script>
-        const socket = io();
-        const logsDiv = document.getElementById('logs');
-        const contactList = document.getElementById('contact-list');
-        const qrContainer = document.getElementById('qr-container');
-        const statusBadge = document.getElementById('status-badge');
+        function toggleLeftMenu() {
+            document.getElementById('left-sidebar').classList.remove('-translate-x-full');
+            document.getElementById('mobile-overlay').classList.remove('hidden');
+            setTimeout(() => {
+                document.getElementById('mobile-overlay').classList.add('opacity-100');
+            }, 10);
+        }
 
-        // LOGGING FUNCTION
-        socket.on('log', (msg) => {
-            const div = document.createElement('div');
-            div.className = 'log-entry text-green-200';
-            div.textContent = `> ${msg}`;
-            logsDiv.appendChild(div);
-            logsDiv.scrollTop = logsDiv.scrollHeight;
+        function toggleRightMenu() {
+            document.getElementById('right-sidebar').classList.remove('translate-x-full');
+            document.getElementById('mobile-overlay').classList.remove('hidden');
+            setTimeout(() => {
+                document.getElementById('mobile-overlay').classList.add('opacity-100');
+            }, 10);
+        }
+
+        function closeMenus() {
+            document.getElementById('left-sidebar').classList.add('-translate-x-full');
+            document.getElementById('right-sidebar').classList.add('translate-x-full');
+            document.getElementById('mobile-overlay').classList.remove('opacity-100');
+            setTimeout(() => {
+                document.getElementById('mobile-overlay').classList.add('hidden');
+            }, 300);
+        }
+    </script>
+
+    <script>
+        const token = localStorage.getItem('token');
+        if (!token) {
+            window.location.href = '/login.html';
+        }
+
+        const socket = io({
+            auth: { token }
         });
 
-        // QR CODE DISPLAY
-        socket.on('qr_code', (url) => {
-            qrContainer.innerHTML = `<img src="${url}" class="w-full h-full" />`;
-            statusBadge.innerText = "Scan Required";
-            statusBadge.className = "px-4 py-2 bg-yellow-600 rounded text-xs font-bold uppercase";
-        });
-
-        // STATUS CHANGE
-        socket.on('status', (status) => {
-            if (status === 'connected') {
-                qrContainer.innerHTML = `<div class="text-green-600 font-bold text-2xl">CONNECTED</div>`;
-                statusBadge.innerText = "System Active";
-                statusBadge.className = "px-4 py-2 bg-green-600 rounded text-xs font-bold uppercase";
+        socket.on('connect_error', (err) => {
+            if (err.message.includes('Authentication error')) {
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                window.location.href = '/login.html';
             }
         });
 
-        // UPDATE CONTACT TABLE
-        socket.on('processing_contact', (data) => {
-            const existingRow = document.getElementById(`row-${data.id}`);
-            if (existingRow) return;
+        // Load UI user data
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                const user = JSON.parse(localStorage.getItem('user'));
+                if (user && user.displayName) {
+                    document.getElementById('userNameDisplay').textContent = user.displayName;
+                    document.getElementById('userRoleDisplay').textContent = user.role === 'admin' ? 'Administrator' : 'Standard';
+                }
+            } catch(e) {}
+        });
 
-            const row = document.createElement('tr');
-            row.id = `row-${data.id}`;
-            row.className = "bg-slate-800 border-b border-slate-700";
-            row.innerHTML = `
-                <td class="px-6 py-4 font-medium text-white">${data.name}</td>
-                <td class="px-6 py-4 text-yellow-400 animate-pulse">Processing...</td>
-                <td class="px-6 py-4 text-right font-mono" id="count-${data.id}">0</td>
+        function logoutApp() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/login.html';
+        }
+
+        let activeSessionId = null;
+        let knownSessions = [];
+        let knownDbSessions = [];
+
+        const sessionListEl = document.getElementById('session-list');
+        const currentSessionNameEl = document.getElementById('current-session-name');
+        const statusBadge = document.getElementById('status-badge');
+        const mobileStatusDot = document.getElementById('mobile-status-dot');
+        const qrSection = document.getElementById('qr-section');
+        const qrContainer = document.getElementById('qr-container');
+        const logsDiv = document.getElementById('logs');
+        const controlPanel = document.getElementById('control-panel');
+        const contactSelect = document.getElementById('contact-select');
+        const settingsPanel = document.getElementById('settings-panel');
+        const masterToggle = document.getElementById('master-toggle');
+        const globalPrompt = document.getElementById('global-prompt');
+
+        socket.on('connect', () => {
+            socket.emit('list_sessions');
+            socket.emit('fetch_db_sessions');
+        });
+
+        socket.on('session_list', (sessions) => {
+            knownSessions = sessions;
+            localStorage.setItem('whatsapp_sessions', JSON.stringify(sessions));
+            updateLeftSidebar();
+        });
+
+        socket.on('db_session_list', (sessions) => {
+            knownDbSessions = sessions;
+            updateLeftSidebar();
+        });
+
+        function updateLeftSidebar() {
+            sessionListEl.innerHTML = '';
+
+            const allIds = new Set([
+                ...knownSessions.filter(s => s && s.id).map(s => s.id),
+                ...knownDbSessions.filter(s => typeof s === 'string')
+            ]);
+
+            allIds.forEach(id => {
+                const live = knownSessions.find(s => s.id === id);
+                const db = knownDbSessions.includes(id);
+
+                const div = document.createElement('div');
+                div.className = `flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition-all border border-transparent hover:bg-card/50 ${activeSessionId === id ? 'bg-card border-borderMuted shadow-md' : ''}`;
+                div.onclick = () => selectSession(id);
+
+                const statusColor = live?.status === 'connected' ? 'bg-[#10b981]' : (live?.status === 'qr_ready' ? 'bg-brandOrange' : 'bg-gray-500');
+
+                const icon = db ? '<i class="fas fa-cloud text-[10px] text-brandOrange/60"></i>' : '<i class="fas fa-bolt text-[10px] text-textMuted"></i>';
+
+                div.innerHTML = `
+                    <div class="flex items-center gap-3 overflow-hidden">
+                        <div class="relative shrink-0">
+                            <div class="w-10 h-10 rounded-full bg-base border border-borderMuted flex items-center justify-center text-white font-bold text-xs">
+                                ${id.substring(0, 1).toUpperCase()}
+                            </div>
+                            <span class="absolute bottom-0 right-0 w-3 h-3 ${statusColor} rounded-full border-2 border-base"></span>
+                        </div>
+                        <div class="flex flex-col overflow-hidden">
+                            <span class="text-sm font-bold text-white truncate">${id}</span>
+                            <span class="text-[10px] text-textMuted flex items-center gap-1.5 font-bold uppercase tracking-tighter">
+                                ${icon} ${live ? live.status : 'ARCHIVED'}
+                            </span>
+                        </div>
+                    </div>
+                `;
+                sessionListEl.appendChild(div);
+            });
+        }
+
+        function selectSession(id) {
+            console.log(`[UI] Selecting Session: ${id}`);
+            activeSessionId = id;
+            currentSessionNameEl.textContent = id;
+
+            // Proactive sync from known state
+            const live = knownSessions.find(s => s.id === id);
+            updateHeaderStatus({ sessionId: id, status: live ? live.status : 'archived' });
+
+            updateLeftSidebar();
+
+            qrSection.classList.add('hidden');
+            controlPanel.classList.add('opacity-50', 'pointer-events-none');
+            settingsPanel.classList.add('hidden');
+            contactSelect.innerHTML = '<option value="">Select target entity...</option>';
+
+            socket.emit('get_status', id);
+            socket.emit('get_config', id);
+            socket.emit('get_db_stats', id);
+        }
+
+        function updateHeaderStatus(data) {
+            if (data.sessionId !== activeSessionId) return;
+            console.log(`[UI] Status Update for ${data.sessionId}: ${data.status}`);
+
+            const isOnline = data.status === 'connected';
+            const statusColor = isOnline ? 'bg-[#10b981]' : (data.status === 'qr_ready' ? 'bg-brandOrange' : 'bg-gray-500');
+
+            let statusHtml = `<span class="w-2 h-2 rounded-full ${statusColor} ${data.status === 'initializing' ? 'animate-pulse' : ''}"></span> ${data.status}`;
+            if (!isOnline && data.status !== 'initializing' && data.status !== 'qr_ready') {
+                statusHtml += `<button onclick="resumeActiveSession()" class="ml-3 px-3 py-1 bg-brandOrange text-white text-[9px] font-bold rounded-lg hover:bg-brandOrangeHover transition-colors scale-90">Start Node</button>`;
+            } else if (isOnline) {
+                // If connected, show a Refresh button to force a reconnection
+                statusHtml += `<button onclick="refreshConnection()" class="ml-3 px-3 py-1 bg-white/10 text-white text-[9px] font-bold rounded-lg hover:bg-white/20 transition-colors scale-90" title="Force a reconnect if stuck"><i class="fas fa-sync-alt mr-1"></i> Sync Connection</button>`;
+            }
+            statusBadge.innerHTML = statusHtml;
+
+            if (isOnline) {
+                controlPanel.classList.remove('opacity-50', 'pointer-events-none');
+                settingsPanel.classList.remove('hidden');
+            } else {
+                controlPanel.classList.add('opacity-50', 'pointer-events-none');
+            }
+
+            mobileStatusDot.className = `absolute top-1 right-1 w-2.5 h-2.5 ${statusColor} rounded-full border-2 border-card`;
+
+            if (data.status === 'qr_ready') {
+                qrSection.classList.remove('hidden');
+                document.getElementById('qr-target-name').textContent = activeSessionId;
+            } else {
+                qrSection.classList.add('hidden');
+            }
+
+            if (isOnline) {
+                controlPanel.classList.remove('opacity-50', 'pointer-events-none');
+                socket.emit('get_config', activeSessionId);
+                socket.emit('get_contacts', activeSessionId);
+                socket.emit('get_db_stats', activeSessionId);
+            } else {
+                // Allow interactions even if offline (archived mode)
+                controlPanel.classList.remove('opacity-50', 'pointer-events-none');
+                settingsPanel.classList.remove('hidden');
+                socket.emit('get_config', activeSessionId);
+                socket.emit('get_contacts', activeSessionId);
+                socket.emit('get_db_stats', activeSessionId);
+            }
+        }
+
+        socket.on('status', (data) => {
+            updateHeaderStatus(data);
+        });
+
+        socket.on('qr_code', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+            qrContainer.innerHTML = `<img src="${data.qr}" class="w-full h-full object-contain">`;
+            qrSection.classList.remove('hidden');
+        });
+
+        socket.on('config_data', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+            globalPrompt.value = data.config.globalPrompt || '';
+            masterToggle.checked = !!data.config.masterAutoReply;
+
+            const engine = data.config.aiEngine || 'gemini';
+            switchEngine(engine, false);
+            if (engine === 'chaka' && data.config.chakaModel) {
+                document.getElementById('chaka-model-select').value = data.config.chakaModel;
+            }
+        });
+
+        socket.on('contact_list', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+            contactSelect.innerHTML = '<option value="">Select target entity...</option>';
+            data.contacts.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                // Cleaner display: "Name (Number)" or just "Number"
+                if (c.name) {
+                    opt.textContent = `${c.name} (${c.cleanId})${c.isLid ? ' [LID]' : ''}`;
+                } else {
+                    opt.textContent = `${c.cleanId}${c.isLid ? ' [LID]' : ''}`;
+                }
+                contactSelect.appendChild(opt);
+            });
+        });
+
+        function loadSettings() {
+            const contactId = contactSelect.value;
+            if (!contactId || !activeSessionId) {
+                settingsPanel.classList.add('hidden');
+                return;
+            }
+            settingsPanel.classList.remove('hidden');
+            document.getElementById('chat-history').innerHTML = '<div class="h-full flex flex-col items-center justify-center opacity-30 gap-4"><i class="fas fa-sync fa-spin text-4xl"></i><p class="text-xs font-bold tracking-widest uppercase">Fetching Stream...</p></div>';
+            socket.emit('get_contact_settings', { sessionId: activeSessionId, contactId });
+            socket.emit('get_chat_history', { sessionId: activeSessionId, contactId });
+        }
+
+        socket.on('contact_settings', (data) => {
+            document.getElementById('custom-prompt').value = data.custom_prompt || '';
+            document.getElementById('auto-reply-toggle').checked = !!data.auto_reply;
+        });
+
+        socket.on('chat_history', (data) => {
+            const histDiv = document.getElementById('chat-history');
+            histDiv.innerHTML = '';
+            if (!data.messages || data.messages.length === 0) {
+                histDiv.innerHTML = '<div class="h-full flex flex-col items-center justify-center opacity-20"><p class="text-xs font-bold uppercase tracking-widest">No local history found</p></div>';
+                return;
+            }
+            data.messages.forEach(m => {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `flex flex-col ${m.is_from_me ? 'items-end' : 'items-start'}`;
+                const time = m.timestamp ? new Date(m.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+                msgDiv.innerHTML = `
+                    <div class="max-w-[85%] rounded-[20px] px-4 py-3 ${m.is_from_me ? 'bg-brandOrange text-white rounded-tr-none' : 'bg-base border border-borderMuted text-white rounded-tl-none'} shadow-sm">
+                        <p class="leading-relaxed">${m.text || '<span class="italic text-[10px] opacity-50">Media/Unsupported</span>'}</p>
+                        <span class="text-[9px] mt-1 block opacity-60 font-bold">${time}</span>
+                    </div>
+                `;
+                histDiv.appendChild(msgDiv);
+            });
+            histDiv.scrollTop = histDiv.scrollHeight;
+        });
+
+        function resumeActiveSession() {
+            if (!activeSessionId) return;
+            socket.emit('resume_session', activeSessionId);
+            showToast('Waking up Node...');
+        }
+
+        function refreshConnection() {
+            if (!activeSessionId) return;
+            showToast("🔄 Synchronizing WhatsApp Connection...");
+            socket.emit('refresh_connection', activeSessionId);
+        }
+
+        function createNewSession() {
+            const id = prompt("Enter Node Identifier (e.g., 'Alpha', 'Node-1'):");
+            if (id) {
+                socket.emit('create_session', id);
+                selectSession(id);
+            }
+        }
+
+        function saveGlobal() {
+            if (!activeSessionId) return;
+            const promptValue = globalPrompt.value;
+            socket.emit('update_config', { sessionId: activeSessionId, updates: { globalPrompt: promptValue } });
+            showToast('Persona Compiled');
+        }
+
+        function toggleMaster() {
+            if (!activeSessionId) return;
+            socket.emit('update_config', { sessionId: activeSessionId, updates: { masterAutoReply: masterToggle.checked } });
+        }
+
+        function saveSettings() {
+            const contactId = contactSelect.value;
+            if (!activeSessionId || !contactId) return;
+            const custom_prompt = document.getElementById('custom-prompt').value;
+            const auto_reply = document.getElementById('auto-reply-toggle').checked;
+            socket.emit('update_contact_settings', { sessionId: activeSessionId, contactId, settings: { custom_prompt, auto_reply } });
+            showToast('Entity Updated');
+        }
+
+        function switchEngine(engine, emit = true) {
+            const geminiBtn = document.getElementById('engine-gemini');
+            const chakaBtn = document.getElementById('engine-chaka');
+            const openRouterBtn = document.getElementById('engine-openrouter');
+            const qwenBtn = document.getElementById('engine-qwen');
+            const chakaOptions = document.getElementById('chaka-options');
+
+            // Reset all
+            geminiBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]";
+            chakaBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]";
+            if (openRouterBtn) openRouterBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]";
+            if (qwenBtn) qwenBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]";
+
+            if (engine === 'gemini') {
+                geminiBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]";
+                chakaOptions.classList.add('hidden');
+            } else if (engine === 'chaka') {
+                chakaBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]";
+                chakaOptions.classList.remove('hidden');
+            } else if (engine === 'openrouter') {
+                if (openRouterBtn) openRouterBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]";
+                chakaOptions.classList.add('hidden');
+            } else if (engine === 'qwen') {
+                if (qwenBtn) qwenBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]";
+                chakaOptions.classList.add('hidden');
+            }
+
+            if (emit && activeSessionId) {
+                socket.emit('update_config', { sessionId: activeSessionId, updates: { aiEngine: engine } });
+            }
+        }
+
+        function saveAiConfig() {
+            if (!activeSessionId) return;
+            
+            let engine = 'gemini';
+            if (document.getElementById('engine-chaka').classList.contains('bg-white')) engine = 'chaka';
+            if (document.getElementById('engine-openrouter').classList.contains('bg-white')) engine = 'openrouter';
+            if (document.getElementById('engine-qwen').classList.contains('bg-white')) engine = 'qwen';
+            
+            const updates = { aiEngine: engine };
+            if (engine === 'chaka') {
+                updates.chakaModel = document.getElementById('chaka-model-select').value;
+            }
+            socket.emit('update_config', { sessionId: activeSessionId, updates });
+            showToast('Engine Deployed');
+        }
+
+        function triggerSelfTrain() {
+            if (!activeSessionId) return;
+            socket.emit('self_train', activeSessionId);
+            showToast('Indexing Started');
+        }
+
+        function manualScrape() {
+            if (!activeSessionId) return;
+            socket.emit('manual_scrape', activeSessionId);
+            showToast('Scrape Initialized');
+        }
+
+        function clearDatabase() {
+            if (!activeSessionId) return;
+            if (confirm("Purge all indexed data for this node? This cannot be undone.")) {
+                socket.emit('clear_database', activeSessionId);
+            }
+        }
+
+        function logoutSession() {
+            if (!activeSessionId) return;
+            if (confirm("Logout and terminate this node?")) {
+                socket.emit('logout_session', activeSessionId);
+                location.reload();
+            }
+        }
+
+        function testInject() {
+            if (!activeSessionId) return;
+            socket.emit('test_inject', activeSessionId);
+            showToast('Injection Probe Sent');
+        }
+
+        socket.on('db_stats', (stats) => {
+            if (stats.sessionId !== activeSessionId) return;
+            document.getElementById('db-size').innerHTML = `${stats.sizeMb} <span class="text-[10px] text-textMuted font-bold mb-1">MB</span>`;
+            document.getElementById('db-msg-count').textContent = stats.messageCount.toLocaleString();
+            document.getElementById('db-sticker-count').textContent = stats.stickerCount.toLocaleString();
+        });
+
+        socket.on('new_db_entry', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+            const feed = document.getElementById('db-feed');
+            if (feed.querySelector('.fa-satellite-dish')) feed.innerHTML = '';
+
+            const entry = document.createElement('div');
+            entry.className = "bg-white/5 p-3 rounded-2xl border border-white/5 animate-fade-in";
+            entry.innerHTML = `
+                <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-[9px] font-bold text-brandOrange uppercase tracking-tighter">Incoming Packet</span>
+                    <span class="text-[8px] text-textMuted font-mono">${new Date().toLocaleTimeString()}</span>
+                </div>
+                <p class="text-white/90 leading-tight truncate">${data.text || 'Binary/Media Data'}</p>
+                <div class="mt-2 text-[8px] text-textMuted font-bold uppercase tracking-widest flex items-center gap-2">
+                    <i class="fas fa-fingerprint text-[7px]"></i> ${data.from.split('@')[0]}
+                </div>
             `;
-            contactList.prepend(row); // Add to top
+            feed.prepend(entry);
+            if (feed.children.length > 20) feed.removeChild(feed.lastChild);
         });
 
-        socket.on('contact_update', (data) => {
-            // Use the ID directly from backend
-            const countCell = document.getElementById(`count-${data.id}`);
-            const row = document.getElementById(`row-${data.id}`);
-
-            if (countCell) countCell.innerText = data.count;
-            // Update status logic if needed, for legacy support or other indicators
+        socket.on('log', (data) => {
+            const logEntry = document.createElement('div');
+            const msg = typeof data === 'object' ? (data.msg || JSON.stringify(data)) : data;
+            logEntry.className = 'mb-1 last:mb-0';
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logsDiv.appendChild(logEntry);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
         });
+
+        function manageApiKeys() {
+            document.getElementById('api-key-modal').classList.remove('hidden');
+            document.getElementById('api-key-modal').classList.add('flex');
+            socket.emit('list_api_keys');
+        }
+
+        function closeKeyModal() {
+            document.getElementById('api-key-modal').classList.add('hidden');
+            document.getElementById('api-key-modal').classList.remove('flex');
+        }
+
+        function addApiKey() {
+            const key = document.getElementById('new-key-input').value.trim();
+            if (key) {
+                socket.emit('add_api_key', key);
+                document.getElementById('new-key-input').value = '';
+            }
+        }
+
+        function deleteApiKey(key) {
+            socket.emit('delete_api_key', key);
+        }
+
+        socket.on('api_keys_list', (keys) => {
+            const container = document.getElementById('key-list-container');
+            container.innerHTML = '';
+            keys.forEach(k => {
+                const div = document.createElement('div');
+                div.className = "bg-base rounded-2xl p-4 flex items-center justify-between border border-borderMuted/50";
+                div.innerHTML = `
+                    <code class="text-xs text-brandOrange/80 font-mono tracking-wider">${k.substring(0, 8)}••••••••${k.substring(k.length - 4)}</code>
+                    <button onclick="deleteApiKey('${k}')" class="text-textMuted hover:text-red-500 transition-colors">
+                        <i class="fas fa-trash-alt text-xs"></i>
+                    </button>
+                `;
+                container.appendChild(div);
+            });
+        });
+
+        function showToast(msg) {
+            const toast = document.createElement('div');
+            toast.className = "fixed bottom-8 left-1/2 -translate-x-1/2 bg-white text-black px-6 py-3 rounded-full font-bold text-xs shadow-2xl z-[100] animate-bounce";
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2500);
+        }
     </script>
+
+    <div id="api-key-modal" class="fixed inset-0 bg-base/90 z-[60] hidden items-center justify-center backdrop-blur-md">
+        <div
+            class="bg-card rounded-[32px] shadow-2xl w-full max-w-md border border-borderMuted overflow-hidden m-4 transform transition-all">
+
+            <div class="px-6 md:px-8 py-6 flex justify-between items-center border-b border-borderMuted">
+                <h3 class="text-base md:text-lg font-bold flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-brandOrange flex items-center justify-center text-white">
+                        <i class="fas fa-key text-[10px]"></i>
+                    </div>
+                    API Key Provisioning
+                </h3>
+                <button onclick="closeKeyModal()"
+                    class="w-8 h-8 rounded-full bg-base border border-borderMuted text-textMuted hover:text-white flex items-center justify-center transition-colors">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="p-6 md:p-8 space-y-6">
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <input type="text" id="new-key-input" placeholder="Inject Provider Key..."
+                        class="flex-1 rounded-2xl bg-base border border-borderMuted px-5 py-3 text-sm font-medium focus:border-brandOrange outline-none transition-colors">
+                    <button onclick="addApiKey()"
+                        class="bg-brandOrange hover:bg-brandOrangeHover text-white px-8 py-3 rounded-2xl text-sm font-bold transition-colors w-full sm:w-auto">
+                        Add
+                    </button>
+                </div>
+
+                <div class="space-y-3 pt-4 border-t border-borderMuted">
+                    <div class="text-[10px] text-textMuted font-bold uppercase tracking-widest pl-1">Active Core Keys
+                    </div>
+                    <div id="key-list-container" class="max-h-48 overflow-y-auto space-y-2 custom-scrollbar pr-2">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </body>
 
 </html>

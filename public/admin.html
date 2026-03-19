@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chaka - Supreme Overview</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Poppins', 'sans-serif'] },
+                    colors: {
+                        base: '#0D0D0E', card: '#18181A', cardHover: '#2A2A2D',
+                        brandOrange: '#FC5A38', brandOrangeHover: '#E04A2A',
+                        textMuted: '#A1A1AA', borderMuted: '#333333'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0D0D0E; color: #FFFFFF; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #333333; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4D4D4D; }
+    </style>
+</head>
+<body class="h-screen w-screen flex antialiased bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-card via-base to-base">
+    
+    <!-- Sidebar -->
+    <aside class="w-64 bg-card border-r border-borderMuted p-6 flex flex-col hidden md:flex shrink-0">
+        <div class="flex items-center gap-3 mb-10">
+            <div class="w-8 h-8 rounded-full bg-brandOrange flex items-center justify-center shrink-0 shadow-lg shadow-brandOrange/20">
+                <i class="fab fa-whatsapp text-white text-sm"></i>
+            </div>
+            <h1 class="text-xl font-bold tracking-tight text-white">Supreme<span class="text-brandOrange">Admin</span></h1>
+        </div>
+        <nav class="space-y-2 flex-1">
+            <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl bg-brandOrange/10 text-brandOrange font-medium transition-colors">
+                <i class="fas fa-chart-pie w-5"></i> Dashboard
+            </a>
+            <a href="/" class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-textMuted hover:text-white transition-colors">
+                <i class="fas fa-home w-5"></i> Exit to App
+            </a>
+        </nav>
+        <div class="pt-6 border-t border-borderMuted">
+            <button onclick="logoutApp()" class="flex items-center justify-center gap-2 w-full py-2 rounded-lg text-red-400 hover:bg-red-400/10 transition-colors text-sm font-medium">
+                <i class="fas fa-sign-out-alt"></i> Terminate Session
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto p-6 md:p-10">
+        <header class="flex justify-between items-center mb-10">
+            <div>
+                <h2 class="text-2xl font-bold">Network Analytics</h2>
+                <p class="text-textMuted text-sm mt-1">Multi-Tenant Cluster Overview</p>
+            </div>
+            <div class="bg-card px-4 py-2 border border-borderMuted rounded-full flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                <span class="text-xs font-medium tracking-widest uppercase text-textMuted">Cluster Online</span>
+            </div>
+        </header>
+
+        <!-- Stats Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+            <div class="bg-card border border-borderMuted rounded-2xl p-6 relative overflow-hidden group">
+                <div class="absolute -right-4 -top-4 w-24 h-24 bg-brandOrange/10 rounded-full blur-xl group-hover:bg-brandOrange/20 transition-colors"></div>
+                <div class="flex items-start justify-between">
+                    <div>
+                        <p class="text-xs text-textMuted uppercase font-medium tracking-wider mb-1">Tenants</p>
+                        <h3 class="text-3xl font-bold" id="stat-users">-</h3>
+                    </div>
+                    <div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-textMuted">
+                        <i class="fas fa-users"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-card border border-borderMuted rounded-2xl p-6 relative overflow-hidden group">
+                <div class="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/10 rounded-full blur-xl group-hover:bg-blue-500/20 transition-colors"></div>
+                <div class="flex items-start justify-between">
+                    <div>
+                        <p class="text-xs text-textMuted uppercase font-medium tracking-wider mb-1">Active Nodes</p>
+                        <h3 class="text-3xl font-bold" id="stat-sessions">-</h3>
+                    </div>
+                    <div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-textMuted">
+                        <i class="fas fa-network-wired"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-card border border-borderMuted rounded-2xl p-6 relative overflow-hidden group">
+                <div class="absolute -right-4 -top-4 w-24 h-24 bg-green-500/10 rounded-full blur-xl group-hover:bg-green-500/20 transition-colors"></div>
+                <div class="flex items-start justify-between">
+                    <div>
+                        <p class="text-xs text-textMuted uppercase font-medium tracking-wider mb-1">Inference Ops</p>
+                        <h3 class="text-3xl font-bold" id="stat-messages">-</h3>
+                    </div>
+                    <div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-textMuted">
+                        <i class="fas fa-brain"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-card border border-borderMuted rounded-2xl p-6 relative overflow-hidden group">
+                <div class="absolute -right-4 -top-4 w-24 h-24 bg-red-500/10 rounded-full blur-xl group-hover:bg-red-500/20 transition-colors"></div>
+                <div class="flex items-start justify-between">
+                    <div>
+                        <p class="text-xs text-textMuted uppercase font-medium tracking-wider mb-1">API Drops</p>
+                        <h3 class="text-3xl font-bold text-red-400" id="stat-failures">-</h3>
+                    </div>
+                    <div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-red-500/50">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Accounts Table -->
+        <div class="bg-card border border-borderMuted rounded-2xl overflow-hidden">
+            <div class="p-6 border-b border-borderMuted flex justify-between items-center bg-white/[0.02]">
+                <h3 class="text-lg font-semibold">Registered Accounts</h3>
+                <button onclick="fetchData()" class="touch-target text-xs text-brandOrange hover:text-brandOrangeHover transition-colors flex items-center gap-2 font-medium bg-brandOrange/10 px-3 py-1.5 rounded-lg border border-brandOrange/20 hover:border-brandOrange/40">
+                    <i class="fas fa-sync-alt"></i> Refresh Sync
+                </button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm whitespace-nowrap">
+                    <thead class="text-xs text-textMuted uppercase bg-black/20 font-medium tracking-wider border-b border-borderMuted">
+                        <tr>
+                            <th class="px-6 py-4">Tenant Identity</th>
+                            <th class="px-6 py-4">Role</th>
+                            <th class="px-6 py-4 text-center">Active Nodes</th>
+                            <th class="px-6 py-4 text-right">Last Telemetry</th>
+                        </tr>
+                    </thead>
+                    <tbody id="accounts-table" class="divide-y divide-borderMuted/50">
+                        <tr>
+                            <td colspan="4" class="px-6 py-8 text-center text-textMuted">
+                                <i class="fas fa-circle-notch fa-spin text-2xl mb-3 text-brandOrange"></i>
+                                <p>Decrypting records...</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const token = localStorage.getItem('token');
+        if (!token) {
+            window.location.href = '/login.html';
+        }
+
+        const user = JSON.parse(localStorage.getItem('user'));
+        if (!user || user.role !== 'admin') {
+            document.body.innerHTML = `
+                <div class="flex flex-col items-center justify-center h-screen w-screen bg-base text-center">
+                    <div class="w-24 h-24 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center text-4xl mb-6 shadow-[0_0_40px_rgba(239,68,68,0.2)]">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <h1 class="text-3xl font-bold mb-2">Clearance Denied</h1>
+                    <p class="text-textMuted max-w-sm mx-auto mb-8">This sector is restricted to Supreme Admin authorization protocols.</p>
+                    <a href="/" class="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-colors text-sm font-medium border border-white/10 hover:border-white/30">Return to Sector Base</a>
+                </div>
+            `;
+        }
+
+        async function fetchData() {
+            try {
+                // Fetch Stats
+                const statsRes = await fetch('/api/admin/stats', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (statsRes.ok) {
+                    const stats = await statsRes.json();
+                    document.getElementById('stat-users').textContent = stats.totalUsers;
+                    document.getElementById('stat-sessions').textContent = stats.totalSessions;
+                    document.getElementById('stat-messages').textContent = stats.totalMessages;
+                    document.getElementById('stat-failures').textContent = stats.failedRequests;
+                }
+
+                // Fetch Accounts
+                const accountsRes = await fetch('/api/admin/accounts', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (accountsRes.ok) {
+                    const accounts = await accountsRes.json();
+                    const tbody = document.getElementById('accounts-table');
+                    tbody.innerHTML = '';
+                    
+                    if (accounts.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="4" class="px-6 py-8 text-center text-textMuted">No tenants located in registry.</td></tr>`;
+                        return;
+                    }
+
+                    accounts.forEach(acc => {
+                        const dateNum = acc.last_login ? acc.last_login * 1000 : acc.created_at * 1000;
+                        const loginDate = new Date(dateNum).toLocaleString();
+                        const isOnline = (Date.now() - dateNum) < (1000 * 60 * 60 * 24); // simplistic online heuristic (< 24hr)
+                        
+                        const roleBadge = acc.role === 'admin' 
+                            ? `<span class="bg-brandOrange/20 text-brandOrange border border-brandOrange/30 text-[10px] px-2 py-1 rounded-md uppercase font-bold tracking-widest"><i class="fas fa-crown text-[8px] mr-1"></i> Admin</span>`
+                            : `<span class="bg-white/10 text-textMuted border border-white/10 text-[10px] px-2 py-1 rounded-md uppercase font-semibold tracking-widest">User</span>`;
+
+                        const tr = document.createElement('tr');
+                        tr.className = "hover:bg-white/[0.02] transition-colors";
+                        tr.innerHTML = `
+                            <td class="px-6 py-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="relative">
+                                        <div class="w-10 h-10 rounded-full bg-black/40 border border-borderMuted flex items-center justify-center font-bold text-white shadow-inner">
+                                            ${acc.display_name.charAt(0).toUpperCase()}
+                                        </div>
+                                        ${isOnline ? '<div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full z-10 box-content"></div>' : ''}
+                                    </div>
+                                    <div class="flex flex-col">
+                                        <span class="font-semibold text-white">${acc.display_name}</span>
+                                        <span class="text-xs text-textMuted">${acc.email}</span>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4">${roleBadge}</td>
+                            <td class="px-6 py-4 text-center">
+                                <div class="inline-flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-borderMuted min-w-[60px] justify-center">
+                                    <span class="font-bold text-white ${acc.session_count > 0 ? 'text-brandOrange' : ''}">${acc.session_count}</span>
+                                    <span class="text-[10px] uppercase text-textMuted tracking-wider font-medium">/ 4</span>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 text-right">
+                                <div class="flex justify-end pr-2">
+                                    <span class="text-xs text-textMuted font-mono bg-black/20 px-2 py-1.5 rounded-md border border-borderMuted/50">${loginDate}</span>
+                                </div>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                }
+            } catch(e) {
+                console.error("Dashboard sync failed", e);
+            }
+        }
+
+        function logoutApp() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/login.html';
+        }
+
+        if(user && user.role === 'admin') fetchData();
+    </script>
+</body>
+</html>

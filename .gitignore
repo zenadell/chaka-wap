@@ -1,5 +1,6 @@
 node_modules/
-auth_baileys/
-serviceAccountKey.json
-.DS_Store
+venv_qwen/
+*.db
 .env
+auth_baileys_*
+.DS_Store

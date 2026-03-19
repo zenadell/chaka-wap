@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chaka Enterprise</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Poppins', 'sans-serif'],
+                        mono: ['Courier New', 'monospace'],
+                    },
+                    colors: {
+                        base: '#18181A',
+                        card: '#222224',
+                        cardHover: '#2A2A2D',
+                        heroBrown: '#3C231D',
+                        brandOrange: '#FC5A38',
+                        brandOrangeHover: '#E04A2A',
+                        textMuted: '#A1A1AA',
+                        borderMuted: '#333333'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #18181A;
+            color: #FFFFFF;
+            overflow: hidden;
+        }
+
+        /* Minimalist Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #333333;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4D4D4D;
+        }
+
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .loader-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(24, 24, 26, 0.9);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #333;
+            border-top: 4px solid #FC5A38;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Form element overrides */
+        input:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #FC5A38;
+        }
+
+        select option {
+            background-color: #222224;
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body class="flex h-screen antialiased selection:bg-brandOrange/30 relative">
+
+    <div id="global-loader" class="loader-overlay">
+        <div class="spinner mb-4"></div>
+        <div class="text-brandOrange text-sm font-semibold tracking-wide">Syncing Data...</div>
+    </div>
+
+    <div id="mobile-overlay"
+        class="fixed inset-0 bg-black/60 z-40 hidden backdrop-blur-sm transition-opacity duration-300"
+        onclick="closeMenus()"></div>
+
+    <aside id="left-sidebar"
+        class="fixed lg:relative inset-y-0 left-0 z-50 w-[280px] bg-base flex flex-col h-full shrink-0 border-r border-borderMuted p-6 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none">
+
+        <div class="flex items-center justify-between mb-10 pl-2">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-full bg-brandOrange flex items-center justify-center">
+                    <i class="fab fa-whatsapp text-white text-lg"></i>
+                </div>
+                <h1 class="text-xl font-bold tracking-tight text-white">chaka</h1>
+            </div>
+            <button onclick="closeMenus()"
+                class="lg:hidden w-8 h-8 flex items-center justify-center rounded-full bg-card text-textMuted hover:text-white border border-borderMuted transition-colors">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <div class="flex flex-col gap-1 flex-1 overflow-y-auto scrollbar-hide" id="session-list">
+        </div>
+
+        <div class="mt-6 bg-brandOrange rounded-[24px] p-6 text-base relative overflow-hidden shrink-0">
+            <div class="relative z-10 flex flex-col items-start gap-4">
+                <h3 class="font-bold text-white text-xl leading-tight">Add Node<br>or API Key</h3>
+                <div class="flex gap-2 w-full">
+                    <button onclick="createNewSession()"
+                        class="flex-1 bg-black/20 hover:bg-black/40 text-white rounded-full py-2.5 transition-colors flex items-center justify-center">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                    <button onclick="manageApiKeys()"
+                        class="flex-1 bg-black/20 hover:bg-black/40 text-white rounded-full py-2.5 transition-colors flex items-center justify-center">
+                        <i class="fas fa-key"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none">
+            </div>
+        </div>
+    </aside>
+
+    <div class="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-base">
+
+        <header
+            class="lg:hidden flex justify-between items-center p-4 border-b border-borderMuted bg-base z-30 shrink-0">
+            <button onclick="toggleLeftMenu()"
+                class="text-white w-10 h-10 rounded-full bg-card hover:bg-cardHover border border-borderMuted transition-colors flex items-center justify-center">
+                <i class="fas fa-bars"></i>
+            </button>
+            <h1 class="font-bold text-lg text-white">chaka</h1>
+            <button onclick="toggleRightMenu()"
+                class="text-brandOrange w-10 h-10 rounded-full bg-card hover:bg-cardHover border border-borderMuted transition-colors flex items-center justify-center relative">
+                <i class="fas fa-bolt"></i>
+                <span id="mobile-status-dot"
+                    class="absolute top-0 right-0 w-2.5 h-2.5 bg-gray-500 rounded-full border-2 border-card"></span>
+            </button>
+        </header>
+
+        <div class="flex-1 flex flex-col xl:flex-row overflow-hidden relative">
+
+            <main class="flex-1 flex flex-col p-4 md:p-8 overflow-y-auto scrollbar-hide pb-24 xl:pb-8">
+
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 md:mb-8">
+                    <div>
+                        <div class="text-textMuted text-xs md:text-sm mb-1">Current Workspace</div>
+                        <div class="flex items-center gap-3">
+                            <h2 id="current-session-name" class="text-xl md:text-2xl font-bold">Select Node</h2>
+                            <div id="status-badge"
+                                class="px-3 py-1 rounded-full bg-card border border-borderMuted text-[10px] md:text-xs font-semibold text-textMuted flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-gray-500"></span> Offline
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        class="flex items-center gap-3 bg-card px-5 py-2.5 rounded-full border border-borderMuted w-max shrink-0">
+                        <span class="text-xs font-semibold text-white">Master Auto</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="master-toggle" class="sr-only peer" onchange="toggleMaster()">
+                            <div
+                                class="w-10 h-6 bg-base rounded-full border border-borderMuted peer-focus:outline-none peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-textMuted peer-checked:after:bg-white after:border-none after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brandOrange peer-checked:border-brandOrange">
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <div id="control-panel"
+                    class="bg-heroBrown rounded-[24px] md:rounded-[32px] p-6 md:p-8 mb-8 flex flex-col lg:flex-row items-start gap-8 lg:gap-12 opacity-50 pointer-events-none transition-opacity duration-300 shrink-0">
+
+                    <div class="w-full lg:flex-1 max-w-[600px] flex flex-col">
+                        <h3 class="text-lg md:text-xl font-bold mb-4">Global Persona</h3>
+                        <textarea id="global-prompt" rows="4"
+                            class="w-full bg-black/20 border border-black/10 rounded-2xl p-4 text-sm text-white placeholder-white/40 resize-none font-medium focus:border-brandOrange transition-colors"
+                            placeholder="Base intelligence instructions..."></textarea>
+
+                        <button onclick="saveGlobal()"
+                            class="mt-5 bg-brandOrange hover:bg-brandOrangeHover text-white font-semibold rounded-full px-8 py-3 w-fit transition-colors text-sm flex items-center justify-center gap-2 shadow-sm">
+                            Compile Persona <i class="fas fa-arrow-right"></i>
+                        </button>
+                    </div>
+
+                    <div class="w-full max-w-[360px] flex flex-col gap-4 shrink-0">
+                        <div class="bg-white/5 rounded-2xl p-1.5 flex">
+                            <button id="engine-gemini" onclick="switchEngine('gemini')"
+                                class="flex-1 py-2.5 rounded-xl text-xs font-semibold bg-white text-black shadow-sm transition-all">Gemini
+                                Core</button>
+                            <button id="engine-chaka" onclick="switchEngine('chaka')"
+                                class="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white/70 hover:text-white transition-all">Chaka
+                                Native</button>
+                        </div>
+
+                        <div id="chaka-options" class="hidden">
+                            <select id="chaka-model-select"
+                                class="w-full bg-white/5 border border-white/10 rounded-2xl p-3 text-sm text-white font-medium cursor-pointer outline-none focus:border-brandOrange transition-colors">
+                                <option value="chaka-low">Chaka Velocity</option>
+                                <option value="chaka-medium">Chaka Core</option>
+                                <option value="chaka-high">Chaka Reasoning (Complex)</option>
+                                <option value="chaka-ultimate">Chaka Ultra</option>
+                            </select>
+                        </div>
+
+                        <div class="flex flex-col gap-3 mt-2">
+                            <button onclick="saveAiConfig()"
+                                class="w-full bg-white/10 hover:bg-white/20 text-white font-semibold rounded-2xl py-3.5 text-xs transition-colors border border-white/5">Deploy
+                                Configuration</button>
+                            <button onclick="triggerSelfTrain()"
+                                class="w-full bg-brandOrange/20 hover:bg-brandOrange/30 text-brandOrange font-semibold rounded-2xl py-3.5 text-xs transition-colors border border-brandOrange/20 flex items-center justify-center gap-2">
+                                <i class="fas fa-database"></i> Index History (Fine-tune)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="qr-section"
+                    class="bg-card rounded-[24px] md:rounded-[32px] p-6 md:p-8 mb-8 flex flex-col items-center justify-center hidden border border-borderMuted max-w-2xl">
+                    <div id="qr-container"
+                        class="bg-white p-4 rounded-2xl w-48 h-48 md:w-56 md:h-56 flex items-center justify-center mb-6">
+                        <p class="text-base text-sm font-semibold">Waiting...</p>
+                    </div>
+                    <p class="text-textMuted text-xs md:text-sm font-medium">Scan to connect <span id="qr-target-name"
+                            class="text-white font-bold ml-1">...</span></p>
+                </div>
+
+                <div id="settings-area" class="max-w-4xl">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                        <h3
+                            class="text-sm md:text-lg font-bold text-textMuted uppercase tracking-widest sm:normal-case sm:tracking-normal sm:text-white">
+                            Entity Target</h3>
+
+                        <div
+                            class="w-full max-w-sm bg-card rounded-full border border-borderMuted flex items-center px-4 overflow-hidden focus-within:border-brandOrange transition-colors">
+                            <i class="fas fa-search text-textMuted text-sm"></i>
+                            <select id="contact-select" onchange="loadSettings()"
+                                class="w-full bg-transparent border-none p-3 text-sm font-medium text-white appearance-none cursor-pointer outline-none">
+                                <option value="">Select target entity...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="settings-panel" class="hidden animate-fade-in flex flex-col gap-6">
+
+                        <div class="flex flex-col sm:flex-row items-start gap-4 border-b border-borderMuted pb-6">
+                            <div
+                                class="w-10 h-10 rounded-full bg-card flex items-center justify-center shrink-0 border border-borderMuted text-brandOrange hidden sm:flex">
+                                <i class="fas fa-user-edit"></i>
+                            </div>
+
+                            <div class="flex-1 w-full max-w-2xl">
+                                <h4 class="font-bold text-sm mb-1">Entity Instructions</h4>
+                                <p class="text-xs text-textMuted mb-3">Overrides the global prompt for this specific
+                                    target.</p>
+                                <textarea id="custom-prompt" rows="4"
+                                    class="w-full bg-card border border-borderMuted rounded-2xl p-4 text-sm font-medium resize-none focus:border-brandOrange transition-colors"
+                                    placeholder="Enter target-specific logic..."></textarea>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between border-b border-borderMuted pb-6 max-w-2xl">
+                            <div class="flex items-center gap-4">
+                                <div
+                                    class="w-10 h-10 rounded-full bg-card flex items-center justify-center shrink-0 border border-borderMuted text-brandOrange">
+                                    <i class="fas fa-robot"></i>
+                                </div>
+                                <div>
+                                    <h4 class="font-bold text-sm">Autonomous Reply</h4>
+                                    <p class="text-[10px] md:text-xs text-textMuted">Enable AI execution for this
+                                        entity.</p>
+                                </div>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="auto-reply-toggle" class="sr-only peer">
+                                <div
+                                    class="w-10 h-6 bg-card rounded-full border border-borderMuted peer-focus:outline-none peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-textMuted peer-checked:after:bg-white after:border-none after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brandOrange peer-checked:border-brandOrange">
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="flex flex-wrap gap-3 pt-2 max-w-2xl">
+                            <button onclick="saveSettings()"
+                                class="w-fit bg-card hover:bg-cardHover border border-borderMuted text-white font-semibold rounded-full px-8 py-3 transition-colors text-sm text-center shadow-sm">
+                                Save Overrides
+                            </button>
+                            <button id="manual-scrape-btn" onclick="manualScrape()"
+                                class="w-fit bg-transparent hover:bg-card border border-borderMuted text-white font-semibold rounded-full px-8 py-3 transition-colors text-sm flex items-center justify-center gap-2">
+                                <i class="fas fa-download"></i> Scrape DB
+                            </button>
+                        </div>
+
+                        <div class="mt-4">
+                            <h4
+                                class="font-bold text-sm mb-4 text-textMuted uppercase md:normal-case tracking-widest md:tracking-normal">
+                                Context Window (Last 50)</h4>
+                            <div id="chat-history"
+                                class="bg-card rounded-[24px] p-4 md:p-6 h-80 overflow-y-auto space-y-4 text-sm font-medium border border-borderMuted custom-scrollbar">
+                                <div class="text-textMuted text-center mt-20">Select an entity to load history.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <aside id="right-sidebar"
+                class="fixed xl:relative inset-y-0 right-0 z-50 w-[85%] sm:w-[360px] bg-base xl:border-l border-borderMuted p-6 md:p-8 flex flex-col gap-6 transform translate-x-full xl:translate-x-0 transition-transform duration-300 ease-in-out shrink-0 h-full overflow-y-auto scrollbar-hide shadow-2xl xl:shadow-none">
+
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-lg font-bold">Node Telemetry</h3>
+                    <div class="flex items-center gap-4">
+                        <button onclick="refreshContacts()"
+                            class="text-[10px] md:text-xs font-semibold text-textMuted hover:text-white transition-colors uppercase tracking-wider bg-card px-3 py-1.5 rounded-full border border-borderMuted">Refresh
+                            DB</button>
+                        <button onclick="closeMenus()"
+                            class="xl:hidden w-8 h-8 flex items-center justify-center rounded-full bg-card text-textMuted hover:text-white border border-borderMuted">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div
+                    class="bg-card rounded-[24px] p-5 flex flex-col gap-4 relative overflow-hidden group border border-borderMuted">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs font-semibold text-textMuted">Database Size</span>
+                        <span id="db-size" class="font-bold text-brandOrange">0 MB</span>
+                    </div>
+                    <div class="w-full bg-base rounded-full h-1.5 overflow-hidden">
+                        <div class="bg-brandOrange h-1.5 rounded-full w-[45%]"></div>
+                    </div>
+
+                    <div class="flex justify-between items-center mt-2">
+                        <div>
+                            <div class="text-[10px] text-textMuted font-semibold uppercase tracking-widest">Vectors
+                            </div>
+                            <div id="db-msg-count" class="font-bold text-lg md:text-xl leading-tight mt-1">0</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] text-textMuted font-semibold uppercase tracking-widest">Stickers
+                            </div>
+                            <div id="db-sticker-count" class="font-bold text-lg md:text-xl leading-tight mt-1">0</div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="clearDatabase()"
+                                class="w-9 h-9 rounded-full bg-base hover:bg-white/10 text-white flex items-center justify-center transition-colors border border-borderMuted"><i
+                                    class="fas fa-trash text-xs"></i></button>
+                            <button onclick="logoutSession()"
+                                class="w-9 h-9 rounded-full bg-base hover:bg-white/10 text-[#fc5a38] flex items-center justify-center transition-colors border border-borderMuted"><i
+                                    class="fas fa-power-off text-xs"></i></button>
+                        </div>
+                    </div>
+                    <div id="db-contact-stats" class="text-[10px] text-textMuted mt-2 font-medium">Tracking 0 local
+                        entities</div>
+                </div>
+
+                <div
+                    class="bg-card rounded-[24px] p-5 flex flex-col h-56 md:h-64 border border-borderMuted hover:border-textMuted transition-colors">
+                    <div class="flex items-center gap-2 mb-4">
+                        <span class="w-2 h-2 rounded-full bg-brandOrange animate-pulse shadow-[0_0_8px_#FC5A38]"></span>
+                        <h4 class="text-sm font-bold">Data Stream</h4>
+                    </div>
+                    <div id="db-feed" class="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                        <div class="text-textMuted text-xs font-medium h-full flex items-center justify-center">Awaiting
+                            telemetry...</div>
+                    </div>
+                </div>
+
+                <div
+                    class="bg-card rounded-[24px] p-5 flex flex-col flex-1 min-h-[220px] border border-borderMuted hover:border-textMuted transition-colors">
+                    <div class="flex justify-between items-center mb-4">
+                        <h4 class="text-sm font-bold">Terminal Output</h4>
+                        <button onclick="document.getElementById('logs').innerHTML=''"
+                            class="w-7 h-7 rounded-full bg-base border border-borderMuted flex items-center justify-center text-textMuted hover:text-white transition-colors"><i
+                                class="fas fa-eraser text-[10px]"></i></button>
+                    </div>
+                    <div id="logs"
+                        class="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar font-mono text-[10px] md:text-[11px] text-textMuted">
+                    </div>
+                    <div class="mt-4 flex gap-2 pt-4 border-t border-borderMuted">
+                        <button onclick="syncHistory()"
+                            class="flex-1 bg-base hover:bg-white/5 border border-borderMuted text-white font-semibold rounded-full py-2.5 transition-colors text-[10px] uppercase tracking-wider">Force
+                            Sync</button>
+                        <button onclick="testInject()"
+                            class="flex-1 bg-[#4F46E5]/20 hover:bg-[#4F46E5]/40 border border-[#4F46E5]/50 text-[#818CF8] font-bold rounded-full py-2.5 transition-colors text-[10px] uppercase tracking-wider">Test
+                            Inject</button>
+                    </div>
+                </div>
+
+            </aside>
+        </div>
+    </div>
+
+    <script>
+        function toggleLeftMenu() {
+            document.getElementById('left-sidebar').classList.remove('-translate-x-full');
+            document.getElementById('mobile-overlay').classList.remove('hidden');
+        }
+
+        function toggleRightMenu() {
+            document.getElementById('right-sidebar').classList.remove('translate-x-full');
+            document.getElementById('mobile-overlay').classList.remove('hidden');
+        }
+
+        function closeMenus() {
+            document.getElementById('left-sidebar').classList.add('-translate-x-full');
+            document.getElementById('right-sidebar').classList.add('translate-x-full');
+            document.getElementById('mobile-overlay').classList.add('hidden');
+        }
+    </script>
+
+    <script>
+        const socket = io();
+        let activeSessionId = null;
+        let knownSessions = [];
+        let knownDbSessions = [];
+
+        const sessionListEl = document.getElementById('session-list');
+        const currentSessionNameEl = document.getElementById('current-session-name');
+        const statusBadge = document.getElementById('status-badge');
+        const mobileStatusDot = document.getElementById('mobile-status-dot');
+        const qrSection = document.getElementById('qr-section');
+        const qrContainer = document.getElementById('qr-container');
+        const logsDiv = document.getElementById('logs');
+        const controlPanel = document.getElementById('control-panel');
+        const contactSelect = document.getElementById('contact-select');
+        const settingsPanel = document.getElementById('settings-panel');
+        const masterToggle = document.getElementById('master-toggle');
+        const globalPrompt = document.getElementById('global-prompt');
+
+        socket.on('connect', () => {
+            socket.emit('list_sessions');
+            socket.emit('fetch_db_sessions');
+        });
+
+        socket.on('session_list', (sessions) => {
+            knownSessions = sessions;
+            localStorage.setItem('whatsapp_sessions', JSON.stringify(sessions));
+
+            if (sessions.length === 0) {
+                sessionListEl.innerHTML = '';
+                activeSessionId = null;
+                currentSessionNameEl.textContent = "No Node Selected";
+                qrSection.classList.add('hidden');
+                controlPanel.classList.add('opacity-50', 'pointer-events-none');
+                return;
+            }
+
+            if (!activeSessionId) {
+                const lastId = localStorage.getItem('last_session_id');
+                const sessionToLoad = sessions.find(s => s.id === lastId) ? lastId : sessions[0].id;
+                switchSession(sessionToLoad);
+            } else {
+                renderSidebar();
+                updateStatusBadge(activeSessionId);
+            }
+        });
+
+        socket.on('db_session_list', (ids) => {
+            knownDbSessions = ids;
+            renderSidebar();
+        });
+
+        function renderSidebar() {
+            sessionListEl.innerHTML = '';
+            const allIds = Array.from(new Set([...knownSessions.map(s => s.id), ...knownDbSessions])).sort();
+
+            allIds.forEach(id => {
+                const activeSess = knownSessions.find(s => s.id === id);
+                const isActive = id === activeSessionId;
+
+                let statusColor = 'bg-gray-500';
+                let isStoredOnly = !activeSess;
+
+                if (activeSess) {
+                    if (activeSess.status === 'connected') statusColor = 'bg-[#10b981] shadow-[0_0_8px_#10b981]';
+                    else if (activeSess.status === 'connecting' || activeSess.status === 'reconnecting') statusColor = 'bg-[#f59e0b] animate-pulse';
+                }
+
+                const btn = document.createElement('button');
+                btn.onclick = () => {
+                    if (isStoredOnly) {
+                        if (confirm(`Wake up saved session "${id}"?`)) {
+                            socket.emit('create_session', id);
+                            switchSession(id);
+                        }
+                    } else {
+                        switchSession(id);
+                        if (window.innerWidth < 1024) closeMenus();
+                    }
+                };
+
+                const baseClass = isActive
+                    ? 'bg-card text-white font-bold border border-borderMuted shadow-sm scale-[1.02]'
+                    : 'bg-transparent text-textMuted hover:bg-cardHover hover:text-white font-medium border border-transparent';
+
+                btn.className = `w-full rounded-[20px] px-4 py-3.5 flex items-center gap-3 transition-all text-sm text-left ${baseClass}`;
+
+                const icon = isStoredOnly ? `<div class="w-8 h-8 rounded-full bg-base flex items-center justify-center shrink-0 border border-borderMuted opacity-50"><i class="fas fa-cloud text-[10px]"></i></div>` : `<div class="w-8 h-8 rounded-full bg-base flex items-center justify-center shrink-0 border border-borderMuted text-brandOrange"><i class="far fa-comment-dots text-xs"></i></div>`;
+
+                btn.innerHTML = `
+                    <div class="relative flex items-center gap-3 w-full">
+                        ${icon}
+                        <span class="truncate flex-1">${id}</span>
+                        ${!isStoredOnly ? `<div class="w-2.5 h-2.5 ${statusColor} rounded-full shrink-0"></div>` : ''}
+                    </div>
+                `;
+                sessionListEl.appendChild(btn);
+            });
+        }
+
+        function createNewSession() {
+            const name = prompt("Enter a name for the new Node:");
+            if (name && name.trim() !== '') {
+                const cleanName = name.trim().replace(/[^a-zA-Z0-9_-]/g, "_");
+                socket.emit('create_session', cleanName);
+                switchSession(cleanName);
+            }
+        }
+
+        function showLoader() { document.getElementById('global-loader').style.display = 'flex'; }
+        function hideLoader() { document.getElementById('global-loader').style.display = 'none'; }
+
+        function switchSession(id) {
+            activeSessionId = id;
+            localStorage.setItem('last_session_id', id);
+            currentSessionNameEl.textContent = id;
+            renderSidebar();
+
+            logsDiv.innerHTML = '';
+            qrSection.classList.add('hidden');
+            contactSelect.innerHTML = '<option value="">Select target entity...</option>';
+            controlPanel.classList.remove('opacity-50', 'pointer-events-none');
+            settingsPanel.classList.add('hidden');
+
+            showLoader();
+            socket.emit('get_status', id);
+            socket.emit('get_contacts', id);
+            socket.emit('get_master_toggle', id);
+            socket.emit('get_global', id);
+            setTimeout(hideLoader, 600);
+        }
+
+        function updateStatusBadge(id) {
+            const session = knownSessions.find(s => s.id === id);
+            const status = session ? session.status : 'disconnected';
+
+            if (status === 'connected') {
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-[#10b981]"></span> <span class="text-[#10b981]">Online</span>`;
+                statusBadge.className = "px-3 py-1 rounded-full bg-[#10b981]/10 border border-[#10b981]/30 text-[10px] md:text-xs font-bold flex items-center gap-2 tracking-wide";
+                mobileStatusDot.className = "absolute top-0 right-0 w-3 h-3 bg-[#10b981] rounded-full border-2 border-card shadow-[0_0_8px_#10b981]";
+                qrSection.classList.add('hidden');
+            } else if (status === 'connecting' || status === 'reconnecting') {
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-[#f59e0b] animate-pulse"></span> <span class="text-[#f59e0b]">Syncing</span>`;
+                statusBadge.className = "px-3 py-1 rounded-full bg-[#f59e0b]/10 border border-[#f59e0b]/30 text-[10px] md:text-xs font-bold flex items-center gap-2 tracking-wide";
+                mobileStatusDot.className = "absolute top-0 right-0 w-3 h-3 bg-[#f59e0b] animate-pulse rounded-full border-2 border-card";
+            } else {
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-gray-500"></span> Offline`;
+                statusBadge.className = "px-3 py-1 rounded-full bg-card border border-borderMuted text-[10px] md:text-xs font-semibold text-textMuted flex items-center gap-2";
+                mobileStatusDot.className = "absolute top-0 right-0 w-3 h-3 bg-gray-500 rounded-full border-2 border-card";
+            }
+        }
+
+        socket.on('log', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+
+            const div = document.createElement('div');
+            div.className = 'py-1 flex gap-2 border-b border-borderMuted/30 pb-2 mb-1';
+
+            let color = 'text-textMuted';
+            let icon = `<i class="fas fa-chevron-right text-[8px] mt-1 opacity-50"></i>`;
+
+            if (data.msg.includes('ERROR') || data.msg.includes('🛑')) { color = 'text-[#fc5a38]'; icon = `<i class="fas fa-exclamation-circle text-[10px] mt-0.5"></i>`; }
+            if (data.msg.includes('✅') || data.msg.includes('🚀')) { color = 'text-white'; icon = `<i class="fas fa-check text-[10px] mt-0.5 text-[#10b981]"></i>`; }
+
+            div.innerHTML = `<span class="${color} shrink-0 w-4 flex justify-center">${icon}</span> <span class="${color} leading-relaxed">${data.msg}</span>`;
+            logsDiv.appendChild(div);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        });
+
+        socket.on('status', (data) => {
+            let sess = knownSessions.find(s => s.id === data.sessionId);
+            if (!sess) {
+                sess = { id: data.sessionId, status: data.status };
+                knownSessions.push(sess);
+                socket.emit('list_sessions');
+            } else {
+                sess.status = data.status;
+            }
+
+            renderSidebar();
+            if (data.sessionId === activeSessionId) {
+                updateStatusBadge(activeSessionId);
+                if (data.status === 'connected') refreshContacts();
+            }
+        });
+
+        socket.on('session_created', () => socket.emit('list_sessions'));
+        socket.on('session_deleted', () => socket.emit('list_sessions'));
+
+        socket.on('qr_code', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+            statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-brandOrange"></span> Scan QR`;
+            qrSection.classList.remove('hidden');
+            document.getElementById('qr-target-name').innerText = activeSessionId;
+            if (data.url) qrContainer.innerHTML = `<img src="${data.url}" class="w-full h-full rounded-xl" />`;
+        });
+
+        socket.on('master_toggle_data', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+            masterToggle.checked = data.enabled;
+        });
+
+        function toggleMaster() {
+            if (!activeSessionId) return;
+            showLoader();
+            socket.emit('set_master_toggle', { sessionId: activeSessionId, enabled: masterToggle.checked });
+            setTimeout(hideLoader, 500);
+        }
+
+        socket.on('global_data', (data) => {
+            globalPrompt.value = data.custom_prompt || '';
+        });
+
+        function saveGlobal() {
+            if (!activeSessionId) return;
+            showLoader();
+            socket.emit('save_global', { sessionId: activeSessionId, custom_prompt: globalPrompt.value });
+            setTimeout(hideLoader, 800);
+        }
+
+        socket.on('db_stats', (data) => {
+            document.getElementById('db-msg-count').innerText = data.messages.toLocaleString();
+            document.getElementById('db-sticker-count').innerText = data.stickers ? data.stickers.toLocaleString() : '0';
+
+            // Clean up the "MB MB" bug
+            let cleanSize = String(data.size).replace(/MB/gi, '').trim();
+            document.getElementById('db-size').innerHTML = `${cleanSize} <span class="text-[10px] text-textMuted font-bold">MB</span>`;
+
+            document.getElementById('db-contact-stats').innerText = `Tracking ${data.contacts} local entities`;
+        });
+
+        socket.on('db_insert', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+            const feed = document.getElementById('db-feed');
+
+            if (feed.querySelector('.text-textMuted')) feed.innerHTML = '';
+
+            const div = document.createElement('div');
+            div.className = 'bg-base border border-borderMuted rounded-2xl p-3 md:p-4 flex flex-col gap-1 hover:border-textMuted transition-colors';
+            div.innerHTML = `
+                <div class="text-[10px] md:text-[11px] text-white font-bold flex items-center gap-2 tracking-wide">
+                    <div class="w-5 h-5 rounded-full bg-brandOrange/20 flex items-center justify-center border border-brandOrange/30">
+                        <i class="fas fa-user text-brandOrange text-[8px]"></i> 
+                    </div>
+                    ${data.contactName}
+                </div>
+                <div class="text-textMuted text-xs truncate ml-7">${data.text}</div>
+            `;
+
+            feed.prepend(div);
+            if (feed.children.length > 50) feed.lastElementChild.remove();
+            socket.emit('get_db_stats', activeSessionId);
+        });
+
+        function clearDatabase() {
+            if (!activeSessionId) return;
+            if (confirm('Wipe ALL local data for this node?')) {
+                showLoader();
+                socket.emit('clear_database', activeSessionId);
+                document.getElementById('db-feed').innerHTML = '<div class="text-textMuted text-xs font-medium h-full flex items-center justify-center">Cleared.</div>';
+                setTimeout(hideLoader, 1000);
+            }
+        }
+
+        function logoutSession() {
+            if (!activeSessionId) return;
+            if (confirm('Terminate session auth?')) {
+                showLoader();
+                socket.emit('logout_session', activeSessionId);
+                setTimeout(hideLoader, 1500);
+            }
+        }
+
+        setInterval(() => { if (activeSessionId) socket.emit('get_db_stats', activeSessionId); }, 30000);
+        setTimeout(() => { if (activeSessionId) socket.emit('get_db_stats', activeSessionId); }, 2000);
+
+        let contactJidMap = {};
+
+        function manualScrape() {
+            const id = contactSelect.value;
+            if (!id || !activeSessionId) return;
+
+            const jid = contactJidMap[id];
+            if (!jid) return;
+
+            if (confirm(`Force scrape context?`)) {
+                showLoader();
+                socket.emit('manual_scrape', { sessionId: activeSessionId, jid: jid });
+                const btn = document.getElementById('manual-scrape-btn');
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '<i class="fas fa-spinner animate-spin"></i>';
+                btn.disabled = true;
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                    hideLoader();
+                }, 2000);
+            }
+        }
+
+        function refreshContacts() {
+            if (activeSessionId) {
+                showLoader();
+                socket.emit('get_contacts', activeSessionId);
+                setTimeout(hideLoader, 800);
+            }
+        }
+
+        function syncHistory() {
+            if (activeSessionId) {
+                if (confirm("Index full node history to DB?")) {
+                    showLoader();
+                    socket.emit('sync_history', activeSessionId);
+                    setTimeout(hideLoader, 1500);
+                }
+            }
+        }
+
+        function testInject() {
+            if (activeSessionId) {
+                showLoader();
+                socket.emit('test_inject', activeSessionId);
+                setTimeout(hideLoader, 500);
+            }
+        }
+
+        socket.on('contact_list', (data) => {
+            if (data.sessionId !== activeSessionId) return;
+            contactJidMap = {};
+            let html = '<option value="">Select target entity...</option>';
+            data.contacts.forEach(c => {
+                contactJidMap[c.id] = c.jid;
+                const displayName = c.name || c.id.split('@')[0];
+                html += `<option value="${c.id}">${displayName}</option>`;
+            });
+            contactSelect.innerHTML = html;
+        });
+
+        function loadSettings() {
+            const id = contactSelect.value;
+            if (!id) {
+                settingsPanel.classList.add('hidden');
+                return;
+            }
+            showLoader();
+            settingsPanel.classList.remove('hidden');
+            socket.emit('get_contact_settings', { sessionId: activeSessionId, contactId: id });
+            socket.emit('get_chat_history', { sessionId: activeSessionId, contactId: id });
+
+            const historyContainer = document.getElementById('chat-history');
+            if (historyContainer) historyContainer.innerHTML = '<div class="text-textMuted text-center mt-20">Fetching...</div>';
+            setTimeout(hideLoader, 500);
+        }
+
+        socket.on('contact_settings', (data) => {
+            document.getElementById('custom-prompt').value = data.custom_prompt || '';
+            document.getElementById('auto-reply-toggle').checked = data.auto_reply || false;
+        });
+
+        function saveSettings() {
+            const id = contactSelect.value;
+            if (!id || !activeSessionId) return;
+
+            showLoader();
+            socket.emit('update_contact_settings', {
+                sessionId: activeSessionId,
+                contactId: id,
+                settings: {
+                    custom_prompt: document.getElementById('custom-prompt').value,
+                    auto_reply: document.getElementById('auto-reply-toggle').checked
+                }
+            });
+            setTimeout(hideLoader, 800);
+        }
+
+        socket.on('chat_history', (data) => {
+            const chatDiv = document.getElementById('chat-history');
+            if (!chatDiv) return;
+
+            if (!data.messages || data.messages.length === 0) {
+                chatDiv.innerHTML = '<div class="text-textMuted text-center mt-20">No records found.</div>';
+                return;
+            }
+
+            let html = '';
+            data.messages.forEach(msg => {
+                const isMe = msg.is_from_me || msg.sender === 'Temple';
+                const align = isMe ? 'justify-end' : 'justify-start';
+                const bg = isMe ? 'bg-brandOrange text-white' : 'bg-base border border-borderMuted text-white';
+                const time = new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                html += `
+            <div class="flex w-full ${align} mb-4">
+                <div class="flex flex-col max-w-[85%] sm:max-w-[75%]">
+                    ${!isMe ? `<span class="text-[10px] text-textMuted font-bold mb-1 ml-1">${msg.sender}</span>` : ''}
+                    <div class="px-4 py-3 rounded-2xl ${bg} ${isMe ? 'rounded-tr-sm shadow-[0_4px_10px_rgba(252,90,56,0.1)]' : 'rounded-tl-sm'}">
+                        <div class="whitespace-pre-wrap leading-relaxed text-[13px] md:text-sm">${msg.text}</div>
+                    </div>
+                    <span class="text-[9px] text-textMuted mt-1.5 ${isMe ? 'text-right mr-1' : 'ml-1'} font-mono">${time}</span>
+                </div>
+            </div>
+        `;
+            });
+            chatDiv.innerHTML = html;
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+        });
+
+        let currentApiKeys = [];
+
+        function manageApiKeys() {
+            socket.emit('get_api_keys');
+            document.getElementById('api-key-modal').classList.remove('hidden');
+            document.getElementById('api-key-modal').classList.add('flex');
+        }
+
+        function closeKeyModal() {
+            document.getElementById('api-key-modal').classList.add('hidden');
+            document.getElementById('api-key-modal').classList.remove('flex');
+        }
+
+        socket.on('api_keys_list', (keysString) => {
+            currentApiKeys = keysString ? keysString.split(',').map(k => k.trim()).filter(k => k) : [];
+            renderKeyList();
+        });
+
+        function renderKeyList() {
+            const container = document.getElementById('key-list-container');
+            container.innerHTML = '';
+
+            if (currentApiKeys.length === 0) {
+                container.innerHTML = '<div class="text-textMuted text-xs text-center py-4">No keys provisioned.</div>';
+                return;
+            }
+
+            currentApiKeys.forEach((key, index) => {
+                const masked = key.length > 8 ? key.substring(0, 4) + '••••••••' + key.substring(key.length - 4) : key;
+                const div = document.createElement('div');
+                div.className = 'flex justify-between items-center bg-base px-4 py-3 rounded-2xl border border-borderMuted';
+                div.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full bg-card flex items-center justify-center border border-borderMuted">
+                            <i class="fas fa-key text-textMuted text-[10px]"></i>
+                        </div>
+                        <span class="text-xs font-mono text-white tracking-wider">${masked}</span>
+                    </div>
+                    <button onclick="removeApiKey(${index})" class="w-8 h-8 rounded-full bg-card hover:bg-[#fc5a38]/20 hover:border-[#fc5a38]/30 border border-borderMuted text-textMuted hover:text-[#fc5a38] transition-colors flex items-center justify-center">
+                        <i class="fas fa-trash-alt text-[10px]"></i>
+                    </button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        let currentEngine = 'gemini';
+        let currentChakaModel = 'chaka-medium';
+
+        function switchEngine(engine) {
+            currentEngine = engine;
+            const geminiBtn = document.getElementById('engine-gemini');
+            const chakaBtn = document.getElementById('engine-chaka');
+            const chakaOptions = document.getElementById('chaka-options');
+
+            if (engine === 'gemini') {
+                geminiBtn.className = 'flex-1 py-2.5 rounded-xl text-xs font-semibold bg-white text-black shadow-sm transition-all';
+                chakaBtn.className = 'flex-1 py-2.5 rounded-xl text-xs font-semibold text-white/70 hover:text-white transition-all';
+                chakaOptions.classList.add('hidden');
+            } else {
+                chakaBtn.className = 'flex-1 py-2.5 rounded-xl text-xs font-semibold bg-white text-black shadow-sm transition-all';
+                geminiBtn.className = 'flex-1 py-2.5 rounded-xl text-xs font-semibold text-white/70 hover:text-white transition-all';
+                chakaOptions.classList.remove('hidden');
+            }
+        }
+
+        function saveAiConfig() {
+            showLoader();
+            const apiKeys = currentApiKeys.join(',');
+            const chakaModel = document.getElementById('chaka-model-select').value;
+
+            socket.emit('update_ai_config', {
+                active_api: currentEngine,
+                chaka_model: chakaModel,
+                api_keys: apiKeys
+            });
+            setTimeout(hideLoader, 1000);
+        }
+
+        function triggerSelfTrain() {
+            if (!activeSessionId) return;
+            if (confirm("Initiate model fine-tuning?")) {
+                showLoader();
+                socket.emit('self_train', activeSessionId);
+                setTimeout(hideLoader, 1000);
+            }
+        }
+
+        socket.on('ai_config_data', (data) => {
+            switchEngine(data.active_api);
+            document.getElementById('chaka-model-select').value = data.chaka_model;
+            if (data.api_keys) {
+                currentApiKeys = data.api_keys.split(',').map(k => k.trim()).filter(k => k.length > 5);
+                renderKeyList();
+            }
+        });
+
+        socket.emit('get_ai_config');
+
+        function addApiKey() {
+            const input = document.getElementById('new-key-input');
+            const newKey = input.value.trim();
+
+            if (!newKey) return;
+            if (currentApiKeys.includes(newKey)) return;
+
+            currentApiKeys.push(newKey);
+            input.value = '';
+            renderKeyList();
+            saveAiConfig();
+        }
+
+        function removeApiKey(index) {
+            currentApiKeys.splice(index, 1);
+            renderKeyList();
+            saveAiConfig();
+        }
+    </script>
+
+    <div id="api-key-modal" class="fixed inset-0 bg-base/90 z-[60] hidden items-center justify-center backdrop-blur-md">
+        <div
+            class="bg-card rounded-[32px] shadow-2xl w-full max-w-md border border-borderMuted overflow-hidden m-4 transform transition-all">
+
+            <div class="px-6 md:px-8 py-6 flex justify-between items-center border-b border-borderMuted">
+                <h3 class="text-base md:text-lg font-bold flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-brandOrange flex items-center justify-center text-white">
+                        <i class="fas fa-key text-[10px]"></i>
+                    </div>
+                    API Key Provisioning
+                </h3>
+                <button onclick="closeKeyModal()"
+                    class="w-8 h-8 rounded-full bg-base border border-borderMuted text-textMuted hover:text-white flex items-center justify-center transition-colors">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="p-6 md:p-8 space-y-6">
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <input type="text" id="new-key-input" placeholder="Inject Provider Key..."
+                        class="flex-1 rounded-2xl bg-base border border-borderMuted px-5 py-3 text-sm font-medium focus:border-brandOrange outline-none transition-colors">
+                    <button onclick="addApiKey()"
+                        class="bg-brandOrange hover:bg-brandOrangeHover text-white px-8 py-3 rounded-2xl text-sm font-bold transition-colors w-full sm:w-auto">
+                        Add
+                    </button>
+                </div>
+
+                <div class="space-y-3 pt-4 border-t border-borderMuted">
+                    <div class="text-[10px] text-textMuted font-bold uppercase tracking-widest pl-1">Active Core Keys
+                    </div>
+                    <div id="key-list-container" class="max-h-48 overflow-y-auto space-y-2 custom-scrollbar pr-2">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+
+</html>
