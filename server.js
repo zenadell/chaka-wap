@@ -106,36 +106,39 @@ function expandSlang(text) {
     return expanded;
 }
 
-function trackTokenSpend(sessionId, tokens) {
+function trackTokenSpend(globalId, tokens) {
     const now = new Date();
     const minuteKey = now.getHours() * 60 + now.getMinutes();
-    let spends = SPEND_TRACKER.get(sessionId) || [];
-    spends = spends.filter(s => s.minute >= minuteKey - 1); // Keep last 2 mins
+    let spends = SPEND_TRACKER.get(globalId) || [];
+    spends = spends.filter(s => s.minute >= minuteKey - 1); 
     const current = spends.find(s => s.minute === minuteKey);
     if (current) current.tokens += tokens;
     else spends.push({ minute: minuteKey, tokens });
-    SPEND_TRACKER.set(sessionId, spends);
+    SPEND_TRACKER.set(globalId, spends);
 }
 
-function getCurrentMinuteSpend(sessionId) {
+function getCurrentMinuteSpend(globalId) {
     const now = new Date();
     const minuteKey = now.getHours() * 60 + now.getMinutes();
-    const spends = SPEND_TRACKER.get(sessionId) || [];
+    const spends = SPEND_TRACKER.get(globalId) || [];
     const current = spends.find(s => s.minute === minuteKey);
     return current?.tokens || 0;
 }
 
-async function isBurstMode(contactId) {
+async function isBurstMode(userId, contactId) {
+    const key = `${userId}_${contactId}`;
     const now = Date.now();
-    const window = BURST_TRACKER.get(contactId) || [];
-    const recent = window.filter(t => now - t.ts < 120000); // 2 mins
+    const window = BURST_TRACKER.get(key) || [];
+    const recent = window.filter(t => now - t.ts < 120000); 
     return recent.length >= 3;
 }
 
-function recordMessage(contactId, tokens) {
-    const window = BURST_TRACKER.get(contactId) || [];
-    window.push({ ts: Date.now(), tokens });
-    BURST_TRACKER.set(contactId, window.slice(-10));
+function recordMessage(userId, contactId, tokens) {
+    const key = `${userId}_${contactId}`;
+    const now = Date.now();
+    const window = BURST_TRACKER.get(key) || [];
+    window.push({ ts: now, tokens });
+    BURST_TRACKER.set(key, window.slice(-10));
 }
 
 
@@ -902,33 +905,34 @@ function createStore() {
 }
 
 async function saveMessageToDB(userId, sessionId, msg, forceSkipEmbedding = false) {
+    const globalId = `${userId}_${sessionId}`;
     try {
         if (!msg) return null;
         const content = extractContent(msg.message);
         const jid = msg.key.remoteJid;
 
         if (!content.text && content.type !== 'sticker' && content.type !== 'image') {
-            if (!forceSkipEmbedding) console.log(`[${sessionId}] ⏭ Skipping: No text content found.`);
+            if (!forceSkipEmbedding) console.log(`[${globalId}] ⏭ Skipping: No text content found.`);
             return null;
         }
 
         if (jid === 'status@broadcast' || jid.includes('@g.us')) {
-            if (!forceSkipEmbedding) console.log(`[${sessionId}] ⏭ Skipping: Non-personal chat (${jid})`);
+            if (!forceSkipEmbedding) console.log(`[${globalId}] ⏭ Skipping: Non-personal chat (${jid})`);
             return null;
         }
 
-        const session = sessions.get(sessionId);
+        const session = sessions.get(globalId);
         const cleanId = jid.replace(/[^a-zA-Z0-9]/g, "_");
 
         // --- NEW: VISION ENGINE ---
         if (content.type === 'image') {
             try {
-                console.log(`[${sessionId}] 👁️ Image detected. Fetching context for occasion analysis...`);
+                console.log(`[${globalId}] 👁️ Image detected. Fetching context for occasion analysis...`);
 
                 // Fetch last 5 messages for context
                 const recentContextRows = await db.all(
-                    `SELECT sender, text FROM messages WHERE session_id = ? AND contact_id = ? ORDER BY timestamp DESC LIMIT 5`,
-                    [sessionId, cleanId]
+                    `SELECT sender, text FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 5`,
+                    [sessionId, cleanId, userId]
                 );
                 const chatContext = recentContextRows.reverse().map(m => `${m.sender}: ${m.text}`).join("\n");
 
@@ -1020,8 +1024,9 @@ async function saveMessageToDB(userId, sessionId, msg, forceSkipEmbedding = fals
     }
 }
 
-async function scrapeChatHistory(sessionId, jid) {
-    const session = sessions.get(sessionId);
+async function scrapeChatHistory(userId, sessionId, jid) {
+    const globalId = `${userId}_${sessionId}`;
+    const session = sessions.get(globalId);
     if (!session || !session.sock) return;
     io.emit('log', { sessionId, msg: `🕵️‍♂️ Deep Scraping memory for ${jid}...` });
 
@@ -1036,7 +1041,7 @@ async function scrapeChatHistory(sessionId, jid) {
 
         let savedCount = 0;
         for (const msg of messages) {
-            const res = await saveMessageToDB(sessionId, msg, true);
+            const res = await saveMessageToDB(userId, sessionId, msg, true);
             if (res) savedCount++;
         }
         if (savedCount > 0) {
@@ -1128,7 +1133,8 @@ async function reindexDatabase(sessionId) {
 }
 
 async function generateSmartReply(userId, sessionId, contactName, contactId, incomingMsg) {
-    const currentSpend = getCurrentMinuteSpend(sessionId);
+    const globalId = `${userId}_${sessionId}`;
+    const currentSpend = getCurrentMinuteSpend(globalId);
     const MAX_TPM = 40000; // Safe ceiling
 
     if (currentSpend > MAX_TPM) {
@@ -1252,17 +1258,17 @@ Use [RELEVANT MEMORIES] silently for facts.${stickerContext}`;
         console.log(`[${sessionId}] 📤 GENERATING RESPONSE (System: ${systemInstruction.length}, User: ${userPrompt.length})`);
 
         const startTime = Date.now();
-        let replyText = await orchestrateAIResponse(sessionId, systemInstruction, userPrompt);
+        let replyText = await orchestrateAIResponse(userId, globalId, systemInstruction, userPrompt);
 
         if (!replyText) {
-            console.error(`[${sessionId}] 🔥 Orchestrator returned null after all retries.`);
+            console.error(`[${globalId}] 🔥 Orchestrator returned null after all retries.`);
             return null;
         }
 
         // Track spending and burst stats
         const usedTokens = Math.ceil(userPrompt.length / 4) + Math.ceil(replyText.length / 4);
-        trackTokenSpend(sessionId, usedTokens);
-        recordMessage(contactId, usedTokens);
+        trackTokenSpend(globalId, usedTokens);
+        recordMessage(userId, contactId, usedTokens);
 
         console.log(`[${sessionId}] ✅ Generated in ${Date.now() - startTime}ms | Used: ${usedTokens} tokens`);
         console.log(`[${sessionId}] ✨ AI Response: ${replyText}`);
@@ -1281,23 +1287,30 @@ Use [RELEVANT MEMORIES] silently for facts.${stickerContext}`;
 
 async function startSession(userId, sessionId) {
     const globalId = `${userId}_${sessionId}`;
+    
+    // Safety guard for malformed IDs
+    if (!sessionId || sessionId === 'undefined' || !userId) {
+        console.error(`[SYSTEM] Aborting startSession for invalid ID: user=${userId}, session=${sessionId}`);
+        return;
+    }
+
     const session = sessions.get(globalId);
-    if (session && (session.connectionState === 'connecting' || session.connectionState === 'qr_ready')) {
-        console.log(`[${sessionId}] ⏳ Already initializing/active. Skipping startSession request.`);
+    if (session && (session.connectionState === 'connecting' || session.connectionState === 'qr_ready' || session.isConnected)) {
+        console.log(`[${globalId}] ⏳ Already initializing/active. Skipping startSession request.`);
         return;
     }
 
     // Set immediate placeholder to lock the session
     sessions.set(globalId, { isConnected: false, connectionState: 'connecting', handshakeTimer: null });
 
-    console.log(`🚀 Starting Session: ${sessionId} for User: ${userId.substring(0,8)}...`);
+    console.log(`🚀 Starting Global Session: ${globalId}...`);
     const authPath = `./data/auth_baileys_${globalId}`;
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
 
     // Use a verified latest version directly to avoid 405/rejections
     const version = [2, 3000, 1033846690];
     const isLatest = true;
-    console.log(`[${sessionId}] 📦 Forced WA Version: ${version.join('.')} (Latest: ${isLatest})`);
+    console.log(`[${globalId}] 📦 Forced WA Version: ${version.join('.')} (Latest: ${isLatest})`);
 
     const store = createStore();
     const phonebook = {};
@@ -1311,33 +1324,36 @@ async function startSession(userId, sessionId) {
         },
         logger,
         printQRInTerminal: false,
-        syncFullHistory: false, // CRITICAL: Meta's new protocol instantly drops new pairings requesting full sync with a decodeFrame error. Must be false.
+        syncFullHistory: false, 
         browser: Browsers.macOS('Desktop'),
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: false,
-        connectTimeoutMs: 180000, // 3 minutes for slow handshakes
+        connectTimeoutMs: 180000,
         keepAliveIntervalMs: 20000, 
         getMessage: async (key) => (await store.loadMessage(key.remoteJid, key.id))?.message || undefined
     });
 
     store.bind(sock.ev);
-    sessions.set(sessionId, { sock, store, phonebook, isConnected: false, connectionState: 'connecting' });
+    sessions.get(globalId).sock = sock;
+    sessions.get(globalId).store = store;
+    sessions.get(globalId).phonebook = phonebook;
 
-    // --- ROBUSTNESS: Handshake Timeout ---
+    // --- CONNECTION WATCHDOG --- (Ensures we don't hang in 'connecting' forever)
+    if (sessions.get(globalId).handshakeTimer) clearTimeout(sessions.get(globalId).handshakeTimer);
     const timeoutHandle = setTimeout(() => {
-        const s = sessions.get(sessionId);
-        if (s && s.connectionState === 'connecting') {
-            console.log(`[${sessionId}] ⚠️ Handshake Timeout (60s). Retrying...`);
+        const s = sessions.get(globalId);
+        if (s && !s.isConnected && s.connectionState !== 'qr_ready') {
+            console.log(`[${globalId}] ⚠️ Handshake Timeout (60s). Retrying...`);
             try { if (s.sock) s.sock.end(undefined); } catch (e) {}
-            sessions.delete(sessionId);
+            sessions.delete(globalId);
             setTimeout(() => startSession(userId, sessionId), 10000);
         }
     }, 60000);
-    sessions.get(sessionId).handshakeTimer = timeoutHandle;
+    sessions.get(globalId).handshakeTimer = timeoutHandle;
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
-        const session = sessions.get(sessionId);
+        const session = sessions.get(globalId);
 
         // --- ZOMBIE SOCKET PROTECTION ---
         if (!session || session.sock !== sock) {
@@ -1359,92 +1375,81 @@ async function startSession(userId, sessionId) {
             const isLoggedOut = statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 405;
             const shouldReconnect = !isLoggedOut;
 
-            console.log(`[${sessionId}] 🔌 Connection Closed. Status: ${statusCode}. Reconnect: ${shouldReconnect}`);
+            console.log(`[${globalId}] 🔌 Connection Closed. Status: ${statusCode}. Reconnect: ${shouldReconnect}`);
 
             if (isLoggedOut) {
-                console.log(`[${sessionId}] 🚨 SESSION INVALIDATED (Code: ${statusCode}). Cleaning up...`);
+                console.log(`[${globalId}] 🚨 SESSION INVALIDATED (Code: ${statusCode}). Cleaning up...`);
                 if (session) {
                     if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
                     if (session.sock) try { session.sock.end(undefined); } catch (e) {}
                 }
                 
-                sessions.delete(sessionId);
+                sessions.delete(globalId);
                 io.emit('status', { sessionId, status: 'disconnected' });
 
                 setTimeout(async () => {
-                    console.log(`[${sessionId}] 🗑️ Purging auth folder...`);
+                    console.log(`[${globalId}] 🗑️ Purging auth folder...`);
                     try {
                         fs.rmSync(authPath, { recursive: true, force: true });
-                        console.log(`[${sessionId}] ✅ Purge successful. Restarting...`);
+                        console.log(`[${globalId}] ✅ Purge successful. Restarting...`);
                         startSession(userId, sessionId);
                     } catch (e) {
-                        console.error(`[${sessionId}] Purge failed:`, e.message);
-                        // Even if purge fails (file busy), try to restart—Baileys might self-heal
+                        console.error(`[${globalId}] Purge failed:`, e.message);
                         startSession(userId, sessionId);
                     }
                 }, 3000);
             } else if (shouldReconnect) {
-                const attempts = (RECONNECT_ATTEMPTS.get(sessionId) || 0) + 1;
-                RECONNECT_ATTEMPTS.set(sessionId, attempts);
+                const attempts = (RECONNECT_ATTEMPTS.get(globalId) || 0) + 1;
+                RECONNECT_ATTEMPTS.set(globalId, attempts);
 
-                // Exponential backoff: 3s, 6s, 12s, 24s, up to 120s
                 const delay = Math.min(3000 * Math.pow(2, attempts - 1), 120000);
-                
                 const status = attempts > 5 ? 'failure' : 'reconnecting';
                 if (session) session.connectionState = status;
                 io.emit('status', { sessionId, status });
 
-                console.log(`[${sessionId}] Reconnecting in ${delay/1000}s (Attempt ${attempts})...`);
+                console.log(`[${globalId}] Reconnecting in ${delay/1000}s (Attempt ${attempts})...`);
                 setTimeout(() => startSession(userId, sessionId), delay);
             } else {
                 if (session && session.sock) session.sock.end(undefined);
-                sessions.delete(sessionId);
+                sessions.delete(globalId);
                 io.emit('status', { sessionId, status: 'disconnected' });
             }
         } else if (connection === 'open') {
-            RECONNECT_ATTEMPTS.set(sessionId, 0); 
+            RECONNECT_ATTEMPTS.set(globalId, 0); 
             if (session && session.handshakeTimer) clearTimeout(session.handshakeTimer);
-            console.log(`[${sessionId}] ✅ WhatsApp Connection Established.`);
+            console.log(`[${globalId}] ✅ WhatsApp Connection Established.`);
             if (session) { session.isConnected = true; session.connectionState = 'connected'; }
             io.emit('status', { sessionId, status: 'connected' });
 
-            // --- ZOMBIE CONNECTION WATCHDOG ---
             if (session && session.watchdogTimer) clearInterval(session.watchdogTimer);
             const watchdog = setInterval(async () => {
-                const s = sessions.get(sessionId);
+                const s = sessions.get(globalId);
                 if (!s || !s.isConnected || !s.sock) {
                     clearInterval(watchdog);
                     return;
                 }
                 try {
-                    // Send a lightweight presence update with a strict 10s timeout
                     const pingPromise = s.sock.sendPresenceUpdate('available');
                     await Promise.race([
                         pingPromise,
                         new Promise((_, reject) => setTimeout(() => reject(new Error('Watchdog Ping Timeout: Socket Frozen')), 10000))
                     ]);
                 } catch (e) {
-                    console.error(`[${sessionId}] 🧟 ZOMBIE CONNECTION DETECTED:`, e.message);
+                    console.error(`[${globalId}] 🧟 ZOMBIE CONNECTION DETECTED:`, e.message);
                     clearInterval(watchdog);
                     if (s.handshakeTimer) clearTimeout(s.handshakeTimer);
                     try { s.sock.end(undefined); } catch (err) {}
-                    sessions.delete(sessionId);
-                    io.emit('status', { sessionId, status: 'disconnected' });
-                    io.emit('log', { sessionId, msg: `🧟 Zombie socket detected. Auto-restarting...` });
                     setTimeout(() => startSession(userId, sessionId), 2000);
                 }
-            }, 60000); // Poll every 60 seconds
+            }, 60000);
             if (session) session.watchdogTimer = watchdog;
         }
     });
 
-    sock.ev.on('creds.update', async () => {
-        console.log(`[${sessionId}] 💾 Saving Credentials...`);
-        await saveCreds();
-    });
+    sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('contacts.upsert', (contacts) => {
-        const session = sessions.get(sessionId);
+        const session = sessions.get(globalId);
         if (!session) return;
         contacts.forEach(c => { if (c.name || c.notify) session.phonebook[c.id] = c.name || c.notify; });
     });
@@ -1454,13 +1459,13 @@ async function startSession(userId, sessionId) {
         let totalSaved = 0;
         for (const item of (messages || [])) {
             if (item.messages && Array.isArray(item.messages)) {
-                for (const msg of item.messages) { if (await saveMessageToDB(sessionId, msg, true)) totalSaved++; }
+                for (const msg of item.messages) { if (await saveMessageToDB(globalId, msg, true)) totalSaved++; }
             } else if (item.key && item.message) {
-                if (await saveMessageToDB(sessionId, item, true)) totalSaved++;
+                if (await saveMessageToDB(globalId, item, true)) totalSaved++;
             }
         }
         if (totalSaved > 0) io.emit('log', { sessionId, msg: `✅ DB DUMP COMPLETE: ${totalSaved} messages saved to SQLite.` });
-        console.log(`[${sessionId}] History Dump Complete: ${totalSaved} saved.`);
+        console.log(`[${globalId}] History Dump Complete: ${totalSaved} saved.`);
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -1515,7 +1520,7 @@ async function startSession(userId, sessionId) {
             io.emit('processing_contact', { sessionId, name: contactName, id: cleanId });
 
             // 🚨 BURST PROTECTION CHECK
-            const burstMode = await isBurstMode(cleanId);
+            const burstMode = await isBurstMode(userId, cleanId);
             if (burstMode) {
                 console.log(`[${sessionId}] ⏸️ BURST MODE DETECTED for ${contactName}: Skipping AI reply to save tokens.`);
                 io.emit('log', { sessionId, msg: `⏸️ Rapid messages from ${contactName} - Cooling down...` });
