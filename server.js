@@ -665,6 +665,16 @@ const io = new Server(server, {
 });
 app.use(express.static('public'));
 
+// Server-side redirect for root to login
+app.get('/', (req, res) => {
+    res.redirect('/login.html');
+});
+
+// Health check for Fly.io
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+});
+
 // --- GOOGLE OAUTH STRATEGY ---
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID || 'dummy_client_id',
