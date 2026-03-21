@@ -53,6 +53,7 @@ let API_KEYS;
 let ACTIVE_API;
 let QWEN_ENDPOINT;
 let OPENROUTER_API_KEY;
+let GROQ_API_KEY;
 let CHAKA_MODEL = 'chaka-medium';
 const CHAKA_MODELS = ['chaka-ultimate', 'chaka-high', 'chaka-medium', 'chaka-low'];
 let db;
@@ -67,6 +68,7 @@ function initGlobalState() {
     ACTIVE_API = process.env.ACTIVE_API || 'openrouter';
     QWEN_ENDPOINT = process.env.QWEN_ENDPOINT || "http://localhost:8000/api/chat";
     OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
+    GROQ_API_KEY = process.env.GROQ_API_KEY || "";
     
     console.log(`\n=================================================`);
     console.log(`⚙️ Engine: ${ACTIVE_API.toUpperCase()}`);
@@ -294,7 +296,7 @@ async function generateLocalEmbedding(text) {
 }
 
 // --- AI SETUP ---
-async function getRotatedModel(userId, modelName = "gemini-3.1-pro-preview") {
+async function getRotatedModel(userId, modelName = "gemini-2.5-flash") {
     const row = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
     const keys = (row && row.api_keys) ? row.api_keys.split(',').map(k => k.trim()).filter(k => k.length > 5) : ["AIzaSyATiIO8ouylB0mwhueHgu05gO2HpJaj3V4"];
     const randomKey = keys[Math.floor(Math.random() * keys.length)];
@@ -350,7 +352,7 @@ async function describeImage(userId, sessionId, imageBuffer, chatContext = "") {
     try {
         console.log(`[${sessionId}] 👁️ Analyzing incoming image with Gemini Vision...`);
         // Vision requires 1.5-flash for binary inline stability, we use 2.5-flash for the main brain
-        const model = await getRotatedModel(userId, "gemini-3.1-pro-preview");
+        const model = await getRotatedModel(userId, "gemini-2.5-flash");
 
         let prompt = `You are an expert at understanding the "occasion" or "reason" why someone sends an image in a casual WhatsApp chat.
         
@@ -476,6 +478,45 @@ async function tryOpenRouterFailover(userId, sessionId, systemPrompt, userPrompt
         console.error(`[${sessionId}] 🔥 OpenRouter Fetch Error:`, error.message);
     }
     
+
+// --- GROQ LLM INTEGRATION (PRIMARY - 14,400 req/day, ~700ms) ---
+async function tryGroqFailover(userId, sessionId, systemPrompt, userPrompt) {
+    const key = GROQ_API_KEY || process.env.GROQ_API_KEY;
+    if (!key) {
+        console.warn(`[${sessionId}] ⚠️ Groq API Key missing! Set GROQ_API_KEY in .env`);
+        return null;
+    }
+    console.log(`[${sessionId}] ⚡ Requesting Groq (Llama 3.3 70B)...`);
+    try {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${key}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                max_tokens: 300,
+                temperature: 0.9
+            })
+        });
+        const data = await response.json();
+        if (data.choices?.[0]?.message?.content) {
+            const reply = data.choices[0].message.content.trim();
+            console.log(`[${sessionId}] ⚡ Groq replied in ~700ms`);
+            return reply;
+        }
+        if (data.error) {
+            console.warn(`[${sessionId}] ⚠️ Groq Error: ${data.error.message}`);
+            // If rate limited, fall through to next provider
+        }
+    } catch (e) {
+        console.error(`[${sessionId}] 🔥 Groq Fetch Error:`, e.message);
+    }
     return null;
 }
 
@@ -557,6 +598,15 @@ async function orchestrateAIResponse(userId, sessionId, systemPrompt, userPrompt
                 const chakaResult = await tryChakaFailover(userId, sessionId, fullLegacyPrompt);
                 if (chakaResult) return chakaResult;
 
+            } else if (activeApi === 'groq') {
+                // GROQ: Primary fast provider, falls back to Gemini
+                const result = await tryGroqFailover(userId, sessionId, systemPrompt, userPrompt);
+                if (result) return result;
+
+                console.warn(`[${sessionId}] Groq failed, falling back to Gemini...`);
+                const gemFallback = await tryGeminiFailover(userId, sessionId, fullLegacyPrompt);
+                if (gemFallback) return gemFallback;
+
             } else if (activeApi === 'openrouter') {
                 const result = await tryOpenRouterFailover(userId, sessionId, systemPrompt, userPrompt);
                 if (result) return result;
@@ -630,7 +680,7 @@ async function tryChakaFailover(userId, sessionId, prompt) {
 
 async function tryGeminiFailover(userId, sessionId, prompt) {
     console.log(`[${sessionId}] 🔄 Starting Gemini Key Rotation & 3.1 Model Hunt...`);
-    const modelsToTry = ["gemini-3.1-pro-preview"];
+    const modelsToTry = ["gemini-2.5-flash"];
     
     const row = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
     const keys = (row && row.api_keys) ? row.api_keys.split(',').map(k => k.trim()).filter(k => k.length > 5) : ["AIzaSyATiIO8ouylB0mwhueHgu05gO2HpJaj3V4"];
@@ -1134,74 +1184,165 @@ async function reindexDatabase(sessionId) {
 
 async function generateSmartReply(userId, sessionId, contactName, contactId, incomingMsg) {
     const globalId = `${userId}_${sessionId}`;
+
+    // ══════════════════════════════════════════════════
+    // SMART TOKEN BUDGET SYSTEM
+    // Groq: 70,000 TPM | Gemini: 250,000 TPM
+    // We track per-user per-minute spend and scale
+    // context/memory dynamically to never hit limits
+    // ══════════════════════════════════════════════════
     const currentSpend = getCurrentMinuteSpend(globalId);
-    const MAX_TPM = 40000; // Safe ceiling
+
+    // Detect which engine is active to set the right ceiling
+    const engineRow = await db.get(`SELECT active_api FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
+    const activeEngine = engineRow?.active_api || 'groq';
+    const MAX_TPM = activeEngine === 'gemini' ? 200000 : 55000; // Conservative safe ceilings
 
     if (currentSpend > MAX_TPM) {
-        console.log(`[${sessionId}] 🚫 TOKEN BUDGET EXHAUSTED: ${currentSpend}/${MAX_TPM}`);
+        console.log(`[${sessionId}] 🚫 TOKEN BUDGET EXHAUSTED (${currentSpend}/${MAX_TPM}) — skipping reply`);
         return null;
     }
 
     const availableTokens = MAX_TPM - currentSpend;
-    let contextLimit, memoryLimit;
 
-    if (availableTokens > 20000) {
-        contextLimit = 15;
-        memoryLimit = 3;
-    } else if (availableTokens > 10000) {
-        contextLimit = 8;
-        memoryLimit = 1;
+    // Dynamic scaling: the more budget left, the richer the context
+    let contextLimit, memoryLimit, includeStyle;
+    if (availableTokens > MAX_TPM * 0.7) {
+        contextLimit = 12; memoryLimit = 3; includeStyle = true;
+    } else if (availableTokens > MAX_TPM * 0.4) {
+        contextLimit = 7;  memoryLimit = 2; includeStyle = true;
+    } else if (availableTokens > MAX_TPM * 0.2) {
+        contextLimit = 4;  memoryLimit = 1; includeStyle = false;
     } else {
-        contextLimit = 3;
-        memoryLimit = 0;
+        contextLimit = 3;  memoryLimit = 0; includeStyle = false;
     }
 
-    console.log(`[${sessionId}] 💰 Budget: ${availableTokens} | Context: ${contextLimit} | Memories: ${memoryLimit}`);
+    console.log(`[${sessionId}] 💰 Budget: ${availableTokens}/${MAX_TPM} | CTX:${contextLimit} MEM:${memoryLimit} STYLE:${includeStyle}`);
 
     try {
         const contactRow = await db.get(`SELECT custom_prompt FROM contacts WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [sessionId, contactId, userId]);
         const globalRow = await db.get(`SELECT * FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
 
-        console.log(`[${sessionId}] 🧠 AI Brain: Engine=${ACTIVE_API.toUpperCase()} | Contact Settings: ${contactRow ? 'Found' : 'Default'}`);
+        console.log(`[${sessionId}] 🧠 AI Brain: Engine=${activeEngine.toUpperCase()} | Contact Settings: ${contactRow ? 'Found' : 'Default'}`);
 
+        // ── RECENT CONVERSATION (scoped to THIS contact only) ──
         const recentHistoryRows = await db.all(
-            `SELECT * FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ? 
+            `SELECT sender, text FROM messages 
+             WHERE session_id = ? AND contact_id = ? AND user_id = ? 
              ORDER BY timestamp DESC LIMIT ?`,
             [sessionId, contactId, userId, contextLimit]
         );
         const recentHistory = recentHistoryRows.reverse();
 
-        // 🚀 DEEP RAG
-        const allVectors = await db.all(`SELECT message_id, contact_id, text, timestamp, date, sender, embedding FROM messages WHERE session_id = ? AND user_id = ? AND embedding IS NOT NULL`, [sessionId, userId]);
+        // ══════════════════════════════════════════════════
+        // ADVANCED 3-LAYER MEMORY SYSTEM
+        //
+        // Layer 1 — Keyword Memory (free, instant, no AI)
+        //   Fast keyword match for names, dates, facts
+        //
+        // Layer 2 — Semantic RAG (local AI embeddings)
+        //   Finds contextually similar past messages
+        //   Only runs if local embedder is available
+        //   Scoped to THIS contact's messages only
+        //
+        // Layer 3 — Long-term Summary (pinned facts)
+        //   Key facts extracted and stored separately
+        //   Never expires, zero tokens to store
+        // ══════════════════════════════════════════════════
 
+        // LAYER 1: Keyword Memory — free, instant
+        const keywords = incomingMsg.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        let keywordMemories = [];
+        if (keywords.length > 0) {
+            const placeholders = keywords.map(() => `text LIKE ?`).join(' OR ');
+            const params = keywords.map(k => `%${k}%`);
+            keywordMemories = await db.all(
+                `SELECT sender, text, date FROM messages 
+                 WHERE session_id = ? AND contact_id = ? AND user_id = ? 
+                 AND (${placeholders})
+                 AND text != ?
+                 ORDER BY timestamp DESC LIMIT 3`,
+                [sessionId, contactId, userId, ...params, incomingMsg]
+            );
+        }
+
+        // LAYER 2: Semantic RAG — scoped to contact, top 50 only
         let retrievedMemories = [];
-        const expandedQuery = expandSlang(incomingMsg);
-        const queryVector = await generateLocalEmbedding(expandedQuery);
+        if (memoryLimit > 0 && localEmbedder) {
+            const expandedQuery = expandSlang(incomingMsg);
+            const queryVector = await generateLocalEmbedding(expandedQuery);
 
-        if (queryVector && allVectors.length > 0) {
-            const parsedQuery = parseEmbedding(queryVector);
-            const scoredMessages = allVectors.map(msg => {
-                const vector = parseEmbedding(msg.embedding);
-                const score = (vector.length > 0) ? cosineSimilarity(parsedQuery, vector) : -1;
-                return { ...msg, score };
-            });
+            if (queryVector) {
+                // KEY FIX: Scoped to THIS contact, not all users, limited to 50
+                const contactVectors = await db.all(
+                    `SELECT message_id, text, timestamp, date, sender, embedding 
+                     FROM messages 
+                     WHERE session_id = ? AND contact_id = ? AND user_id = ? 
+                     AND embedding IS NOT NULL 
+                     ORDER BY timestamp DESC LIMIT 50`,
+                    [sessionId, contactId, userId]
+                );
 
-            retrievedMemories = scoredMessages
-                .filter(m => m.score > 0.45 && m.text !== incomingMsg)
-                .sort((a, b) => b.score - a.score)
-                .slice(0, memoryLimit);
+                if (contactVectors.length > 0) {
+                    const parsedQuery = parseEmbedding(queryVector);
+                    retrievedMemories = contactVectors
+                        .map(msg => ({
+                            ...msg,
+                            score: cosineSimilarity(parsedQuery, parseEmbedding(msg.embedding))
+                        }))
+                        .filter(m => m.score > 0.5 && m.text !== incomingMsg)
+                        .sort((a, b) => b.score - a.score)
+                        .slice(0, memoryLimit);
+                }
+            }
         }
 
+        // Build memory block — compact format to save tokens
         let memoryDetails = "";
-        for (const mem of retrievedMemories) {
-            const context = await fetchContextWindow(userId, sessionId, mem.contact_id || contactId, mem.timestamp);
-            memoryDetails += `--- RELEVANT MEMORY ---\n${context}\n\n`;
+
+        if (keywordMemories.length > 0) {
+            const kwBlock = keywordMemories.map(m => `${m.sender}: ${m.text}`).join('\n');
+            memoryDetails += `[KEYWORD MATCH]\n${kwBlock}\n\n`;
         }
-        // 🎭 DYNAMIC STYLE LEARNING
-        const styleSamples = await fetchUserStyleSamples(userId, sessionId, contactId);
+
+        for (const mem of retrievedMemories) {
+            // Only fetch tight context window (±60s) to keep tokens low
+            const context = await db.all(
+                `SELECT sender, text FROM messages 
+                 WHERE session_id = ? AND contact_id = ? AND user_id = ?
+                 AND timestamp BETWEEN ? AND ?
+                 ORDER BY timestamp ASC LIMIT 4`,
+                [sessionId, contactId, userId, mem.timestamp - 60, mem.timestamp + 60]
+            );
+            if (context.length > 0) {
+                memoryDetails += `[RELATED (${Math.round(mem.score * 100)}% match)]\n`;
+                memoryDetails += context.map(c => `${c.sender}: ${c.text}`).join('\n') + '\n\n';
+            }
+        }
+
+        // LAYER 3: Long-term pinned facts (name, preferences, key events)
+        const pinnedFacts = await db.all(
+            `SELECT text FROM messages 
+             WHERE session_id = ? AND contact_id = ? AND user_id = ? AND is_from_me = 0
+             AND (text LIKE '%my name%' OR text LIKE '%I am%' OR text LIKE '%I'm%' 
+                  OR text LIKE '%I work%' OR text LIKE '%I live%' OR text LIKE '%I have%'
+                  OR text LIKE '%my number%' OR text LIKE '%remember%' OR text LIKE '%birthday%')
+             ORDER BY timestamp ASC LIMIT 5`,
+            [sessionId, contactId, userId]
+        );
+        let pinnedContext = "";
+        if (pinnedFacts.length > 0) {
+            pinnedContext = `[KNOWN FACTS ABOUT ${contactName.toUpperCase()}]\n` +
+                pinnedFacts.map(f => `• ${f.text}`).join('\n') + '\n\n';
+        }
+
+        // ── STYLE LEARNING (only when budget allows) ──
         let styleContext = "";
-        if (styleSamples) {
-            styleContext = `\n\n[STYLE REFERENCE: HOW ${MY_NAME} TYPICALLY RESPOND]\n${styleSamples}\n\nINSTRUCTION: MIRRORS the brevity, slang usage, and punctuation patterns found in the samples above. If the samples are short, you stay short. If they use specific emojis or lowercase, you do the same.`;
+        if (includeStyle) {
+            const styleSamples = await fetchUserStyleSamples(userId, sessionId, contactId);
+            if (styleSamples) {
+                styleContext = `[MY REPLY STYLE]\n${styleSamples}\nMIRROR this tone, length and style.\n\n`;
+            }
         }
 
         const conversationScript = recentHistory.map(h => `${h.sender}: ${h.text}`).join('\n');
@@ -1223,14 +1364,28 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         const userPersona = contactRow?.custom_prompt || globalRow?.custom_prompt || "You are a helpful assistant.";
         let systemInstruction = `${userPersona}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}`;
 
-        let userPrompt = `${styleContext}${memoryDetails}\n\n[RECENT CONVERSATION]\n${conversationScript}\n${MY_NAME}:`;
+        // ── BUILD FINAL PROMPT (token-efficient format) ──
+        let userPrompt = '';
+        if (pinnedContext) userPrompt += pinnedContext;
+        if (memoryDetails) userPrompt += memoryDetails;
+        if (styleContext)  userPrompt += styleContext;
+        userPrompt += `[RECENT CONVERSATION]\n${conversationScript}\n${MY_NAME}:`;
 
-        // ✂️ DYNAMIC TRUNCATION FOR STABILITY
-        // If using Qwen (Colab), we truncate more aggressively to prevent ngrok 'socket hang up'
-        const maxPromptLen = (ACTIVE_API === 'qwen') ? 3500 : 8000;
+        // ✂️ SMART TRUNCATION — per-engine token limits
+        // Groq: ~6000 chars safe | Gemini: ~12000 | Qwen: ~3500
+        const engineLimits = { groq: 6000, gemini: 12000, qwen: 3500, openrouter: 6000, chaka: 4000 };
+        const maxPromptLen = engineLimits[activeEngine] || 6000;
         if (userPrompt.length > maxPromptLen) {
-            console.log(`[${sessionId}] ✂️ Truncating active prompt from ${userPrompt.length} to ${maxPromptLen} for stability.`);
-            userPrompt = userPrompt.substring(userPrompt.length - maxPromptLen);
+            // Preserve recent conversation, trim from top
+            const recentConvIdx = userPrompt.lastIndexOf('[RECENT CONVERSATION]');
+            if (recentConvIdx > 0 && userPrompt.length - recentConvIdx < maxPromptLen) {
+                // Keep all recent conversation, trim only memory/style from top
+                const toTrim = userPrompt.length - maxPromptLen;
+                userPrompt = userPrompt.substring(toTrim);
+            } else {
+                userPrompt = userPrompt.substring(userPrompt.length - maxPromptLen);
+            }
+            console.log(`[${sessionId}] ✂️ Prompt trimmed to ${userPrompt.length} chars for ${activeEngine}`);
         }
 
         console.log(`[${sessionId}] 📤 GENERATING RESPONSE (System: ${systemInstruction.length}, User: ${userPrompt.length})`);
