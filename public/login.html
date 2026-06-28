@@ -118,6 +118,11 @@
             errorAlert.classList.add('hidden');
         });
 
+        // Arriving from the landing page "Get started" CTA opens sign-up mode directly.
+        if (new URLSearchParams(location.search).get('signup') === '1') {
+            toggleBtn.click();
+        }
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             errorAlert.classList.add('hidden');
@@ -145,7 +150,7 @@
                 if (res.ok) {
                     localStorage.setItem('token', data.token);
                     localStorage.setItem('user', JSON.stringify(data.user));
-                    window.location.href = '/';
+                    window.location.href = '/index.html';
                 } else {
                     errorText.textContent = data.error || "Authentication failed";
                     errorAlert.classList.remove('hidden');

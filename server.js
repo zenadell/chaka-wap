@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
+import * as cheerio from 'cheerio';
 import https from 'https';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -27,10 +28,21 @@ import jwt from 'jsonwebtoken';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { v4 as uuidv4 } from 'uuid';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+
+// --- ENVIRONMENT ---
+const IS_PROD = process.env.NODE_ENV === 'production';
 
 // --- SECURITY PROTOCOLS ---
-const JWT_SECRET = process.env.JWT_SECRET || "chaka_super_secret_dev_key_2026";
-const ADMIN_EMAIL = "timtemple2024@gmail.com";
+// JWT_SECRET must be provided in production. Fail fast rather than ship a known default.
+const JWT_SECRET = process.env.JWT_SECRET || (IS_PROD ? null : "chaka_dev_only_secret_change_me");
+if (!JWT_SECRET) {
+    console.error("💥 FATAL: JWT_SECRET environment variable is required in production. Refusing to start.");
+    process.exit(1);
+}
+// Admin email is configurable; falls back to the original owner address for backwards-compat.
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "timtemple2024@gmail.com";
 
 // --- GLOBAL STABILITY HANDLERS ---
 process.on('unhandledRejection', (reason, promise) => {
@@ -54,8 +66,23 @@ let ACTIVE_API;
 let QWEN_ENDPOINT;
 let OPENROUTER_API_KEY;
 let GROQ_API_KEY;
+let DEEPSEEK_API_KEY;
 let CHAKA_MODEL = 'chaka-medium';
 const CHAKA_MODELS = ['chaka-ultimate', 'chaka-high', 'chaka-medium', 'chaka-low'];
+// --- PRIMARY TEXT/AGENTIC ENGINE: DeepSeek (direct paid API) ---
+// DeepSeek V4 Flash is strong for tool-calling and agentic tasks. We hit DeepSeek's
+// own OpenAI-compatible endpoint directly (no OpenRouter middleman). Gemini is
+// reserved for vision only (see describeImage()).
+const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+// 'deepseek-chat' = non-thinking mode of V4 Flash: fast, ~10x cheaper than thinking mode,
+// and ideal for short conversational WhatsApp replies. NOTE: this alias is scheduled to
+// retire 2026-07-24 — re-verify the non-thinking path on 'deepseek-v4-flash' before then.
+// For future agentic/tool-calling work, route those calls to 'deepseek-reasoner' instead.
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+// OpenRouter remains available as a fallback/alternate route to the same model family.
+const OPENROUTER_TEXT_MODEL = process.env.OPENROUTER_TEXT_MODEL || 'deepseek/deepseek-v4-flash';
+// Gemini model for vision, audio transcription, and text fallback.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
 let db;
 
 // Ensure data directory exists for persistent storage
@@ -64,11 +91,18 @@ if (!fs.existsSync('./data')) {
 }
 
 function initGlobalState() {
-    API_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "AIzaSyATiIO8ouylB0mwhueHgu05gO2HpJaj3V4").split(',');
-    ACTIVE_API = process.env.ACTIVE_API || 'openrouter';
+    API_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "").split(',').map(k => k.trim()).filter(Boolean);
+    if (API_KEYS.length === 0) {
+        console.warn("⚠️ No GEMINI_API_KEYS set — vision/image understanding will be disabled.");
+    }
+    ACTIVE_API = process.env.ACTIVE_API || 'deepseek';
     QWEN_ENDPOINT = process.env.QWEN_ENDPOINT || "http://localhost:8000/api/chat";
     OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
     GROQ_API_KEY = process.env.GROQ_API_KEY || "";
+    DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
+    if (!DEEPSEEK_API_KEY) {
+        console.warn("⚠️ No DEEPSEEK_API_KEY set — primary AI engine will fall back to OpenRouter/Chaka.");
+    }
     
     console.log(`\n=================================================`);
     console.log(`⚙️ Engine: ${ACTIVE_API.toUpperCase()}`);
@@ -162,7 +196,12 @@ async function initDB() {
             max_sessions INTEGER DEFAULT 4,
             created_at INTEGER,
             last_login INTEGER,
-            google_id TEXT
+            google_id TEXT,
+            account_type TEXT,
+            business_name TEXT,
+            objective TEXT,
+            tone TEXT,
+            onboarded INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS request_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,7 +220,7 @@ async function initDB() {
             api_keys TEXT,
             custom_prompt TEXT,
             master_auto_reply INTEGER DEFAULT 1,
-            active_api TEXT DEFAULT 'gemini',
+            active_api TEXT DEFAULT 'deepseek',
             chaka_model TEXT DEFAULT 'chaka-medium',
             PRIMARY KEY (id, user_id)
         );
@@ -217,17 +256,65 @@ async function initDB() {
             usage_count INTEGER DEFAULT 1,
             last_used INTEGER
         );
+        CREATE TABLE IF NOT EXISTS knowledge_graph (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            contact_id TEXT,
+            subject TEXT,
+            predicate TEXT,
+            object TEXT,
+            timestamp INTEGER,
+            embedding TEXT
+        );
+        CREATE TABLE IF NOT EXISTS scheduled_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            session_id TEXT,
+            contact_id TEXT,
+            message TEXT,
+            send_at_timestamp INTEGER,
+            status TEXT DEFAULT 'pending'
+        );
+        CREATE TABLE IF NOT EXISTS business_knowledge (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,          -- 'product' | 'service' | 'info' | 'faq'
+            name TEXT NOT NULL,          -- product/service name, info label, or FAQ question
+            detail TEXT,                 -- description / answer / value
+            price TEXT,                  -- free-text price (optional, products/services)
+            created_at INTEGER
+        );
     `);
 
     // --- MIGRATION: ADD USER_ID COLUMNS (IGNORES IF EXIST) ---
     try { await db.exec(`ALTER TABLE global_settings ADD COLUMN user_id TEXT DEFAULT 'admin'`); } catch (e) { }
     // Note: SQLite ALTER TABLE ADD COLUMN cannot define composite Primary Keys retroactively, 
     // so we rely on session scoping. It's safe since session IDs are globally unique per user via auth\_baileys_{uid}_{sid}.
-    try { await db.exec(`ALTER TABLE global_settings ADD COLUMN active_api TEXT DEFAULT 'gemini'`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE global_settings ADD COLUMN active_api TEXT DEFAULT 'deepseek'`); } catch (e) { }
     try { await db.exec(`ALTER TABLE global_settings ADD COLUMN chaka_model TEXT DEFAULT 'chaka-medium'`); } catch (e) { }
     try { await db.exec(`ALTER TABLE contacts ADD COLUMN user_id TEXT DEFAULT 'admin'`); } catch (e) { }
     try { await db.exec(`ALTER TABLE messages ADD COLUMN user_id TEXT DEFAULT 'admin'`); } catch (e) { }
     try { await db.exec(`ALTER TABLE stickers ADD COLUMN user_id TEXT DEFAULT 'admin'`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE contacts ADD COLUMN draft_mode INTEGER DEFAULT 0`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE global_settings ADD COLUMN global_draft_mode INTEGER DEFAULT 0`); } catch (e) { }
+    // --- MIGRATION: ONBOARDING / ACCOUNT-TYPE PROFILE ---
+    try { await db.exec(`ALTER TABLE users ADD COLUMN account_type TEXT`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE users ADD COLUMN business_name TEXT`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE users ADD COLUMN objective TEXT`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE users ADD COLUMN tone TEXT`); } catch (e) { }
+    try {
+        // Runs only on the first boot after this column is added (subsequent ALTERs throw
+        // and are caught), so pre-existing accounts are grandfathered in as onboarded and
+        // are never forced through the flow or have their custom prompts overwritten.
+        await db.exec(`ALTER TABLE users ADD COLUMN onboarded INTEGER DEFAULT 0`);
+        await db.exec(`UPDATE users SET onboarded = 1`);
+    } catch (e) { }
+    // --- MIGRATION: ADMIN ANALYTICS (geolocation + activity) ---
+    try { await db.exec(`ALTER TABLE users ADD COLUMN last_ip TEXT`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE users ADD COLUMN country TEXT`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE users ADD COLUMN country_code TEXT`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE users ADD COLUMN city TEXT`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE users ADD COLUMN last_active INTEGER`); } catch (e) { }
 
     // --- ADMIN SEEDING ---
     const adminExists = await db.get(`SELECT id FROM users WHERE email = ?`, [ADMIN_EMAIL]);
@@ -247,7 +334,7 @@ async function initDB() {
     await db.run(`UPDATE stickers SET user_id = ? WHERE user_id IS NULL OR user_id = 'admin'`, [adminId]);
 
     // Ensure global settings exist for Admin
-    await db.run(`INSERT OR IGNORE INTO global_settings (id, user_id, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, 1, 'gemini', 'chaka-medium')`, [adminId]);
+    await db.run(`INSERT OR IGNORE INTO global_settings (id, user_id, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, 1, 'deepseek', 'chaka-medium')`, [adminId]);
     await loadGlobalConfig(adminId); // Load the admin's config just for legacy compatibility in memory, though we should transition to per-user active_apis.
     console.log("🗄️ Multi-Tenant SQLite Database Initialized Successfully.");
 }
@@ -256,10 +343,7 @@ async function loadGlobalConfig() {
     try {
         const row = await db.get(`SELECT * FROM global_settings WHERE id = 'settings'`);
         if (row) {
-            if (row.api_keys) {
-                const dbKeys = row.api_keys.split(',').map(k => k.trim()).filter(k => k.length > 5);
-                if (dbKeys.length > 0) API_KEYS = dbKeys;
-            }
+            // API keys are platform-hosted via env (GEMINI_API_KEYS) — never overridden from the DB.
             if (row.active_api) ACTIVE_API = row.active_api;
             if (row.chaka_model) CHAKA_MODEL = row.chaka_model;
         }
@@ -296,10 +380,13 @@ async function generateLocalEmbedding(text) {
 }
 
 // --- AI SETUP ---
-async function getRotatedModel(userId, modelName = "gemini-2.5-flash") {
-    const row = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-    const keys = (row && row.api_keys) ? row.api_keys.split(',').map(k => k.trim()).filter(k => k.length > 5) : ["AIzaSyATiIO8ouylB0mwhueHgu05gO2HpJaj3V4"];
-    const randomKey = keys[Math.floor(Math.random() * keys.length)];
+async function getRotatedModel(userId, modelName = GEMINI_MODEL) {
+    // Keys are hosted centrally by the platform (env GEMINI_API_KEYS) — users never
+    // supply their own. userId is kept for signature compatibility / future per-tenant limits.
+    if (!API_KEYS || API_KEYS.length === 0) {
+        throw new Error("No platform Gemini keys configured (set GEMINI_API_KEYS).");
+    }
+    const randomKey = API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
     const genAI = new GoogleGenerativeAI(randomKey);
 
     if (modelName === "text-embedding-004" || modelName === "embedding-001") {
@@ -313,10 +400,11 @@ async function fetchUserStyleSamples(userId, sessionId, contactId) {
     try {
         console.log(`[${sessionId}] 🎭 Analyzing user writing style for ${contactId}...`);
 
-        // 1. Try to get samples specifically from this contact
+        // 1. Try to get REAL human-written samples (exclude BOT replies by filtering out sender = MY_NAME)
         let samples = await db.all(
             `SELECT text FROM messages 
              WHERE session_id = ? AND contact_id = ? AND user_id = ? AND is_from_me = 1 
+             AND sender != 'BOT' AND message_id NOT LIKE 'BOT_%'
              ORDER BY timestamp DESC LIMIT 8`,
             [sessionId, contactId, userId]
         );
@@ -327,6 +415,7 @@ async function fetchUserStyleSamples(userId, sessionId, contactId) {
             samples = await db.all(
                 `SELECT text FROM messages 
                  WHERE session_id = ? AND user_id = ? AND is_from_me = 1 
+                 AND sender != 'BOT' AND message_id NOT LIKE 'BOT_%'
                  ORDER BY timestamp DESC LIMIT 10`,
                 [sessionId, userId]
             );
@@ -334,10 +423,17 @@ async function fetchUserStyleSamples(userId, sessionId, contactId) {
 
         if (!samples || samples.length === 0) return "";
 
-        // 3. Clean up samples to avoid repeating bot artifacts or boring loops
+        // 3. Clean up samples: remove bot artifacts, duplicates, and very short messages
+        const seen = new Set();
         const cleanedSamples = (samples || [])
             .map(s => s.text)
-            .filter(t => t && !t.includes('hey boy') && !t.includes('i gots ya man') && !t.includes('typeshit')) // Filter out the loops
+            .filter(t => {
+                if (!t || t.length < 3) return false;
+                const lower = t.toLowerCase().trim();
+                if (seen.has(lower)) return false; // Remove duplicates
+                seen.add(lower);
+                return !lower.startsWith('[sticker') && !lower.startsWith('bot_');
+            })
             .slice(0, 5);
 
         if (cleanedSamples.length === 0) return null;
@@ -352,7 +448,7 @@ async function describeImage(userId, sessionId, imageBuffer, chatContext = "") {
     try {
         console.log(`[${sessionId}] 👁️ Analyzing incoming image with Gemini Vision...`);
         // Vision requires 1.5-flash for binary inline stability, we use 2.5-flash for the main brain
-        const model = await getRotatedModel(userId, "gemini-2.5-flash");
+        const model = await getRotatedModel(userId, GEMINI_MODEL);
 
         let prompt = `You are an expert at understanding the "occasion" or "reason" why someone sends an image in a casual WhatsApp chat.
         
@@ -379,6 +475,38 @@ async function describeImage(userId, sessionId, imageBuffer, chatContext = "") {
     } catch (e) {
         console.error("Vision Analysis Failed:", e.message);
         return "an image";
+    }
+}
+
+// Transcribe an incoming WhatsApp voice note. Uses Gemini's native audio support
+// (same inline-data path as vision) so no local STT model is needed. WhatsApp PTT
+// audio is OGG/Opus.
+async function transcribeAudio(userId, sessionId, audioBuffer, mimeType = "audio/ogg") {
+    try {
+        console.log(`[${sessionId}] 🎙️ Transcribing voice note with Gemini...`);
+        const model = await getRotatedModel(userId, GEMINI_MODEL);
+
+        const prompt = `Transcribe this WhatsApp voice note to text in its original language. ` +
+            `Return ONLY the spoken words — no commentary, labels, or quotes. ` +
+            `If there is no intelligible speech, return an empty string.`;
+
+        const result = await model.generateContent([
+            prompt,
+            {
+                inlineData: {
+                    data: audioBuffer.toString("base64"),
+                    // Strip any codec suffix (e.g. "audio/ogg; codecs=opus") for the API.
+                    mimeType: (mimeType || "audio/ogg").split(";")[0].trim(),
+                },
+            },
+        ]);
+
+        const transcript = result.response.text().trim();
+        console.log(`[${sessionId}] 🎙️ Transcript: ${transcript.slice(0, 80)}${transcript.length > 80 ? '…' : ''}`);
+        return transcript;
+    } catch (e) {
+        console.error("Audio Transcription Failed:", e.message);
+        return "";
     }
 }
 
@@ -440,6 +568,73 @@ async function generateChakaResponse(userId, prompt, modelOverride = null) {
     }
 }
 
+// --- DEEPSEEK LLM INTEGRATION (PRIMARY — direct paid API) ---
+async function tryDeepSeekFailover(userId, sessionId, systemPrompt, userPrompt) {
+    if (!DEEPSEEK_API_KEY) {
+        console.warn(`[${sessionId}] ⚠️ DEEPSEEK_API_KEY missing — skipping DeepSeek.`);
+        return null;
+    }
+
+    // Retry transient failures (network blips, timeouts, 429/5xx) so a single hiccup
+    // doesn't drop a reply. Auth/validation errors are NOT retried (they won't self-heal).
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        console.log(`[${sessionId}] 🔵 Requesting DeepSeek (${DEEPSEEK_MODEL})${attempt > 1 ? ` [retry ${attempt}/${MAX_ATTEMPTS}]` : ''}...`);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        try {
+            const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: DEEPSEEK_MODEL,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt }
+                    ],
+                    max_tokens: 500,
+                    stream: false
+                }),
+                signal: controller.signal
+            });
+
+            // Rate limit / server errors are transient — back off and retry.
+            if (response.status === 429 || response.status >= 500) {
+                console.warn(`[${sessionId}] ⚠️ DeepSeek transient HTTP ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}).`);
+                if (attempt < MAX_ATTEMPTS) { await delay(800 * attempt); continue; }
+                return null;
+            }
+
+            const data = await response.json();
+
+            if (data && data.choices && data.choices.length > 0) {
+                const content = data.choices[0].message.content;
+                if (content && content.trim()) return content.trim();
+                console.warn(`[${sessionId}] ⚠️ DeepSeek returned empty content.`);
+                return null;
+            }
+            if (data && data.error) {
+                // e.g. invalid key / bad request — retrying won't help.
+                console.warn(`[${sessionId}] ⚠️ DeepSeek Error: ${data.error.message || JSON.stringify(data.error)}`);
+                return null;
+            }
+            console.warn(`[${sessionId}] ⚠️ DeepSeek returned no choices (HTTP ${response.status}).`);
+            return null;
+        } catch (error) {
+            // Network failure or timeout/abort — transient, retry.
+            console.error(`[${sessionId}] 🔥 DeepSeek Fetch Error (attempt ${attempt}/${MAX_ATTEMPTS}): ${error.message}`);
+            if (attempt < MAX_ATTEMPTS) { await delay(800 * attempt); continue; }
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+    return null;
+}
+
 // --- OPENROUTER LLM INTEGRATION ---
 async function tryOpenRouterFailover(userId, sessionId, systemPrompt, userPrompt) {
     if (!OPENROUTER_API_KEY) {
@@ -447,10 +642,9 @@ async function tryOpenRouterFailover(userId, sessionId, systemPrompt, userPrompt
         return null;
     }
 
-    console.log(`[${sessionId}] 🔄 Requesting OpenRouter (Qwen 3 Coder)...`);
-    
-    // Fallback prompt combination
-    const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
+    console.log(`[${sessionId}] 🔄 Requesting OpenRouter (${OPENROUTER_TEXT_MODEL})...`);
+
+    const referer = process.env.PUBLIC_URL || 'http://localhost:3000';
 
     try {
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -458,12 +652,15 @@ async function tryOpenRouterFailover(userId, sessionId, systemPrompt, userPrompt
             headers: {
                 'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
                 'Content-Type': 'application/json',
-                'HTTP-Referer': 'http://localhost:3000',
-                'X-OpenRouter-Title': 'WhatsApp Crawler AI'
+                'HTTP-Referer': referer,
+                'X-Title': 'WhatsApp Crawler AI'
             },
             body: JSON.stringify({
-                model: 'qwen/qwen3-coder:free',
-                messages: [{ role: 'user', content: combinedPrompt }]
+                model: OPENROUTER_TEXT_MODEL,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ]
             })
         });
 
@@ -477,7 +674,7 @@ async function tryOpenRouterFailover(userId, sessionId, systemPrompt, userPrompt
     } catch (error) {
         console.error(`[${sessionId}] 🔥 OpenRouter Fetch Error:`, error.message);
     }
-    
+}
 
 // --- GROQ LLM INTEGRATION (PRIMARY - 14,400 req/day, ~700ms) ---
 async function tryGroqFailover(userId, sessionId, systemPrompt, userPrompt) {
@@ -500,8 +697,8 @@ async function tryGroqFailover(userId, sessionId, systemPrompt, userPrompt) {
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
                 ],
-                max_tokens: 300,
-                temperature: 0.9
+                max_tokens: 200,
+                temperature: 0.7
             })
         });
         const data = await response.json();
@@ -578,24 +775,37 @@ async function generateQwenResponse(systemPrompt, userPrompt) {
 
 async function orchestrateAIResponse(userId, sessionId, systemPrompt, userPrompt) {
     let attempts = 0;
-    const fullLegacyPrompt = `${systemPrompt}\n\n${userPrompt}`; // Fallback for Gemini/Chaka
 
     const row = await db.get(`SELECT active_api FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-    const activeApi = (row && row.active_api) ? row.active_api : 'gemini';
+    const activeApi = (row && row.active_api) ? row.active_api : 'deepseek';
 
     while (true) {
         attempts++;
         console.log(`[${sessionId}] 🛰️ AI Orchestrator: Try #${attempts}`);
 
         try {
-            if (activeApi === 'qwen') {
+            if (activeApi === 'deepseek') {
+                // DEEPSEEK (direct paid API): primary engine (with its own retries).
+                // Fallback chain: DeepSeek → OpenRouter → Gemini (Chaka removed — endpoint is down/400).
+                const result = await tryDeepSeekFailover(userId, sessionId, systemPrompt, userPrompt);
+                if (result) return result;
+
+                console.warn(`[${sessionId}] DeepSeek failed, falling back to OpenRouter...`);
+                const orResult = await tryOpenRouterFailover(userId, sessionId, systemPrompt, userPrompt);
+                if (orResult) return orResult;
+
+                console.warn(`[${sessionId}] OpenRouter failed, falling back to Gemini...`);
+                const gemResult = await tryGeminiFailover(userId, sessionId, systemPrompt, userPrompt);
+                if (gemResult) return gemResult;
+
+            } else if (activeApi === 'qwen') {
                 // LLAMA 3.1 (Labelled Qwen/Local)
                 const result = await tryQwenFailover(userId, sessionId, systemPrompt, userPrompt);
                 if (result) return result;
 
                 // FALLBACK ONLY TO CHAKA IF LLAMA IS DOWN
                 console.warn(`[${sessionId}] Llama 3.1 Offline, falling back to Chaka...`);
-                const chakaResult = await tryChakaFailover(userId, sessionId, fullLegacyPrompt);
+                const chakaResult = await tryChakaFailover(userId, sessionId, `${systemPrompt}\n\n${userPrompt}`);
                 if (chakaResult) return chakaResult;
 
             } else if (activeApi === 'groq') {
@@ -604,7 +814,7 @@ async function orchestrateAIResponse(userId, sessionId, systemPrompt, userPrompt
                 if (result) return result;
 
                 console.warn(`[${sessionId}] Groq failed, falling back to Gemini...`);
-                const gemFallback = await tryGeminiFailover(userId, sessionId, fullLegacyPrompt);
+                const gemFallback = await tryGeminiFailover(userId, sessionId, systemPrompt, userPrompt);
                 if (gemFallback) return gemFallback;
 
             } else if (activeApi === 'openrouter') {
@@ -612,25 +822,25 @@ async function orchestrateAIResponse(userId, sessionId, systemPrompt, userPrompt
                 if (result) return result;
                 
                 console.warn(`[${sessionId}] OpenRouter Offline, falling back to Chaka...`);
-                const chakaResult = await tryChakaFailover(userId, sessionId, fullLegacyPrompt);
+                const chakaResult = await tryChakaFailover(userId, sessionId, `${systemPrompt}\n\n${userPrompt}`);
                 if (chakaResult) return chakaResult;
 
             } else if (activeApi === 'gemini') {
-                const result = await tryGeminiFailover(userId, sessionId, fullLegacyPrompt);
+                const result = await tryGeminiFailover(userId, sessionId, systemPrompt, userPrompt);
                 if (result) return result;
-                const chakaResult = await tryChakaFailover(userId, sessionId, fullLegacyPrompt);
+                const chakaResult = await tryChakaFailover(userId, sessionId, `${systemPrompt}\n\n${userPrompt}`);
                 if (chakaResult) return chakaResult;
             } else if (activeApi === 'chaka') {
-                const result = await tryChakaFailover(userId, sessionId, fullLegacyPrompt);
+                const result = await tryChakaFailover(userId, sessionId, `${systemPrompt}\n\n${userPrompt}`);
                 if (result) return result;
 
                 console.warn(`[${sessionId}] Chaka Offline, falling back to Gemini...`);
-                const geminiResult = await tryGeminiFailover(userId, sessionId, fullLegacyPrompt);
+                const geminiResult = await tryGeminiFailover(userId, sessionId, systemPrompt, userPrompt);
                 if (geminiResult) return geminiResult;
             } else {
-                const result = await tryChakaFailover(userId, sessionId, fullLegacyPrompt);
+                const result = await tryChakaFailover(userId, sessionId, `${systemPrompt}\n\n${userPrompt}`);
                 if (result) return result;
-                const geminiResult = await tryGeminiFailover(userId, sessionId, fullLegacyPrompt);
+                const geminiResult = await tryGeminiFailover(userId, sessionId, systemPrompt, userPrompt);
                 if (geminiResult) return geminiResult;
             }
 
@@ -678,29 +888,33 @@ async function tryChakaFailover(userId, sessionId, prompt) {
     return null;
 }
 
-async function tryGeminiFailover(userId, sessionId, prompt) {
-    console.log(`[${sessionId}] 🔄 Starting Gemini Key Rotation & 3.1 Model Hunt...`);
-    const modelsToTry = ["gemini-2.5-flash"];
-    
-    const row = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-    const keys = (row && row.api_keys) ? row.api_keys.split(',').map(k => k.trim()).filter(k => k.length > 5) : ["AIzaSyATiIO8ouylB0mwhueHgu05gO2HpJaj3V4"];
-    if (keys.length === 0) return null;
+async function tryGeminiFailover(userId, sessionId, systemPrompt, userPrompt) {
+    console.log(`[${sessionId}] 🔄 Starting Gemini 2.5 Flash...`);
+
+    // Platform-hosted keys only (env GEMINI_API_KEYS). Users do not supply keys.
+    const keys = API_KEYS || [];
+    if (keys.length === 0) {
+        console.warn(`[${sessionId}] ⚠️ No platform Gemini keys configured — skipping Gemini.`);
+        return null;
+    }
 
     for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
         const genAI = new GoogleGenerativeAI(key);
         
-        for (const modelName of modelsToTry) {
-            try {
-                console.log(`[${sessionId}] 🛠️ Testing Gemini -> Key #${i + 1} | Model: ${modelName}`);
-                const model = genAI.getGenerativeModel({ model: modelName });
-                const result = await model.generateContent(prompt);
-                const text = result.response.text();
-                if (text && text.length > 0) return text.trim();
-            } catch (e) {
-                console.warn(`[${sessionId}] ⚠️ Gemini ${modelName} (Key #${i + 1}) Failed: ${e.message.split('\n')[0]}`);
-                await delay(2000); // Small gap between model tries
-            }
+        try {
+            console.log(`[${sessionId}] 🛠️ Testing Gemini -> Key #${i + 1} | Model: `);
+            const model = genAI.getGenerativeModel({ 
+                model: GEMINI_MODEL,
+                systemInstruction: systemPrompt,
+                generationConfig: { temperature: 0.7, maxOutputTokens: 200 }
+            });
+            const result = await model.generateContent(userPrompt);
+            const text = result.response.text();
+            if (text && text.length > 0) return text.trim();
+        } catch (e) {
+            console.warn(`[${sessionId}] ⚠️ Gemini 2.5 Flash (Key #${i + 1}) Failed: ${e.message.split('\n')[0]}`);
+            await delay(2000);
         }
     }
     return null;
@@ -709,19 +923,43 @@ async function tryGeminiFailover(userId, sessionId, prompt) {
 // --- SERVER SETUP & AUTHENTICATION ---
 const app = express();
 app.set('trust proxy', 1); // Trust Fly.io proxy for HTTPS redirects
-app.use(express.json());
+
+// Allowed origins for CORS / Socket.io. Comma-separated list in CORS_ORIGINS.
+// In dev (no list set) we allow all; in prod an explicit allowlist is required.
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
+const corsOrigin = CORS_ORIGINS.length > 0 ? CORS_ORIGINS : (IS_PROD ? false : true);
+if (IS_PROD && CORS_ORIGINS.length === 0) {
+    console.warn("⚠️ CORS_ORIGINS is not set in production — cross-origin requests will be blocked.");
+}
+
+// Security headers. CSP is disabled because the dashboard ships inline scripts/styles;
+// enable a tailored policy once the front-end is refactored to external assets.
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(express.json({ limit: '5mb' }));
+
 const server = createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "*",
+        origin: corsOrigin,
         methods: ["GET", "POST"]
     }
 });
-app.use(express.static('public'));
+// index:false so "/" falls through to the marketing landing page below instead of
+// auto-serving the dashboard (index.html). Explicit paths like /index.html still work.
+app.use(express.static('public', { index: false }));
 
-// Server-side redirect for root to login
+// Throttle authentication endpoints to slow down credential brute-forcing.
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many attempts. Please try again later." }
+});
+
+// Marketing landing page — the public entry point. "Get Started" funnels into signup.
 app.get('/', (req, res) => {
-    res.redirect('/login.html');
+    res.sendFile(path.join(__dirname, 'public', 'landing.html'));
 });
 
 // Health check for Fly.io
@@ -743,18 +981,18 @@ passport.use(new GoogleStrategy({
         let user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
         if (!user) {
             const userId = uuidv4();
-            const role = email === 'timtemple2024@gmail.com' ? 'admin' : 'user';
+            const role = email === ADMIN_EMAIL ? 'admin' : 'user';
             const hash = await bcrypt.hash(uuidv4(), 10);
             await db.run(
                 `INSERT INTO users (id, email, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
                 [userId, email, hash, displayName, role, Math.floor(Date.now() / 1000)]
             );
             await db.run(
-                `INSERT OR IGNORE INTO global_settings (id, user_id, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, 1, 'openrouter', 'chaka-medium')`, 
+                `INSERT OR IGNORE INTO global_settings (id, user_id, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, 1, 'deepseek', 'chaka-medium')`, 
                 [userId]
             );
             user = { id: userId, email, display_name: displayName, role };
-        } else if (email === 'timtemple2024@gmail.com' && user.role !== 'admin') {
+        } else if (email === ADMIN_EMAIL && user.role !== 'admin') {
             await db.run('UPDATE users SET role = "admin" WHERE id = ?', [user.id]);
             user.role = 'admin';
         }
@@ -794,7 +1032,7 @@ const authenticateToken = (req, res, next) => {
 };
 
 // --- AUTH API ENDPOINTS ---
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', authLimiter, async (req, res) => {
     try {
         const { email, password, displayName } = req.body;
         if (!email || !password) return res.status(400).json({ error: "Email and password required" });
@@ -804,7 +1042,7 @@ app.post('/api/register', async (req, res) => {
 
         const hash = await bcrypt.hash(password, 10);
         const userId = uuidv4();
-        const role = email === 'timtemple2024@gmail.com' ? 'admin' : 'user';
+        const role = email === ADMIN_EMAIL ? 'admin' : 'user';
         
         await db.run(
             `INSERT INTO users (id, email, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -813,9 +1051,12 @@ app.post('/api/register', async (req, res) => {
 
         // Auto-seed global settings for the new user so the dashboard doesn't crash
         await db.run(
-            `INSERT OR IGNORE INTO global_settings (id, user_id, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, 1, 'openrouter', 'chaka-medium')`, 
+            `INSERT OR IGNORE INTO global_settings (id, user_id, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, 1, 'deepseek', 'chaka-medium')`, 
             [userId]
         );
+
+        await db.run('UPDATE users SET last_active = ? WHERE id = ?', [Math.floor(Date.now() / 1000), userId]);
+        geolocateAndStore(userId, req.ip); // fire-and-forget
 
         const token = jwt.sign({ id: userId, email, role: role }, JWT_SECRET, { expiresIn: '7d' });
         res.json({ token, user: { id: userId, email, displayName: displayName || email.split('@')[0], role: role } });
@@ -825,7 +1066,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', authLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
         const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
@@ -833,8 +1074,10 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ error: "Invalid email or password" });
         }
         
-        await db.run('UPDATE users SET last_login = ? WHERE id = ?', [Math.floor(Date.now() / 1000), user.id]);
-        
+        const nowTs = Math.floor(Date.now() / 1000);
+        await db.run('UPDATE users SET last_login = ?, last_active = ? WHERE id = ?', [nowTs, nowTs, user.id]);
+        geolocateAndStore(user.id, req.ip); // fire-and-forget
+
         const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
         res.json({ token, user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role } });
     } catch (e) {
@@ -844,34 +1087,337 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.get('/api/me', authenticateToken, async (req, res) => {
-    const user = await db.get('SELECT id, email, display_name, role, max_sessions FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get('SELECT id, email, display_name, role, max_sessions, account_type, business_name, objective, tone, onboarded FROM users WHERE id = ?', [req.user.id]);
     res.json(user);
 });
 
+// --- ONBOARDING: ACCOUNT TYPE -> TAILORED AI PERSONA ---
+const VALID_ACCOUNT_TYPES = ['business', 'personal', 'creator', 'freelancer'];
+
+// Builds the system prompt that shapes how the AI replies on the user's behalf,
+// based on the account type and objectives they pick during onboarding.
+function buildPersonaPrompt(profile) {
+    const {
+        account_type = 'personal',
+        business_name = '',
+        objective = '',
+        tone = '',
+        display_name = ''
+    } = profile || {};
+
+    const name = (business_name || display_name || '').trim();
+    const toneLine = tone ? `Preferred tone: ${tone}.` : '';
+    const objectiveLine = objective
+        ? `What the owner asked you to focus on (work within this, do not add responsibilities beyond it): "${objective}".`
+        : `The owner hasn't given detailed instructions yet, so keep it general: greet people warmly, find out what they need, and help with whatever you genuinely know.`;
+
+    // Applies to every business-facing persona. The assistant has NO connected catalog,
+    // pricing, or order/booking system unless the owner explicitly described one — so it
+    // must never fabricate those. This is what keeps replies honest in production.
+    const grounding = (who) => `GROUND RULES — read carefully:
+- Only say things you have actually been told (the info above + this conversation). Treat everything else as unknown.
+- NEVER invent or assume products, prices, packages, services, stock, availability, opening hours, address, delivery, payment methods, discounts, policies, or an ordering/booking system. None of these exist unless stated above.
+- Don't proactively offer orders, bookings, or services the owner hasn't mentioned. Let the other person say what they need first.
+- If asked about something you weren't given, do NOT guess. Say you'll check with ${who} and take their question/details, or ask a short clarifying question.
+- Never promise or confirm anything on ${who}'s behalf that you can't back up.`;
+
+    const templates = {
+        business: `You are the WhatsApp assistant for "${name || 'this business'}", chatting with people who message it, on the owner's behalf.
+- Be professional, warm, and genuinely helpful — represent the brand well.
+- ${objectiveLine}
+- Greet people, understand what they're reaching out about, and help with whatever you actually have information about.
+- Keep replies concise and chat-friendly — this is WhatsApp, not email.
+${grounding(name || 'the owner')}`,
+
+        freelancer: `You are the WhatsApp assistant for ${name || 'an independent professional'}, handling messages from clients and prospects.
+- Be professional, personable, and responsive.
+- ${objectiveLine}
+- Understand what the person needs and help with what you genuinely know. For specifics you can't confirm (quotes, scope, scheduling), take their details for follow-up.
+${grounding(name || 'the owner')}`,
+
+        creator: `You are the WhatsApp assistant for ${name || 'a creator'}, replying to fans and followers.
+- Be friendly, appreciative, and engaging — make every fan feel seen.
+- ${objectiveLine}
+- Thank people for their support and answer what you genuinely know.
+- Do NOT invent announcements, drops, release dates, links, prices, or collaborations you weren't told about. If you don't know, say you'll find out.`,
+
+        personal: `You are replying to personal WhatsApp chats on behalf of ${name || 'the user'}, sounding exactly like them.
+- Be casual, warm, and natural — like texting a friend. Short messages, emojis where they fit.
+- Match the other person's energy and humour. Friendly banter is welcome.
+- ${objectiveLine}
+- Never sound robotic or corporate. Keep it light and social.
+- Don't make up plans, facts, or commitments on their behalf — if you're unsure, keep it vague or say you'll check.`
+    };
+
+    const base = templates[account_type] || templates.personal;
+    return [base, toneLine].filter(Boolean).join('\n\n');
+}
+
+app.post('/api/onboarding', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        let { account_type, business_name, objective, tone } = req.body || {};
+
+        if (!VALID_ACCOUNT_TYPES.includes(account_type)) {
+            return res.status(400).json({ error: "Please choose a valid account type." });
+        }
+        business_name = (business_name || '').toString().trim().slice(0, 120);
+        objective = (objective || '').toString().trim().slice(0, 500);
+        tone = (tone || '').toString().trim().slice(0, 60);
+
+        const userRow = await db.get('SELECT display_name FROM users WHERE id = ?', [userId]);
+        const display_name = userRow?.display_name || '';
+
+        // Persist the profile on the user record.
+        await db.run(
+            `UPDATE users SET account_type = ?, business_name = ?, objective = ?, tone = ?, onboarded = 1 WHERE id = ?`,
+            [account_type, business_name, objective, tone, userId]
+        );
+
+        // Generate the tailored AI persona and store it as the user's global custom_prompt,
+        // which orchestrateAIResponse() already consumes for every auto-reply.
+        const persona = buildPersonaPrompt({ account_type, business_name, objective, tone, display_name });
+        const existing = await db.get(`SELECT id FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
+        if (existing) {
+            await db.run(`UPDATE global_settings SET custom_prompt = ? WHERE id = 'settings' AND user_id = ?`, [persona, userId]);
+        } else {
+            await db.run(
+                `INSERT INTO global_settings (id, user_id, custom_prompt, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, ?, 1, 'deepseek', 'chaka-medium')`,
+                [userId, persona]
+            );
+        }
+
+        res.json({ ok: true, account_type, persona });
+    } catch (e) {
+        console.error("Onboarding error:", e);
+        res.status(500).json({ error: "Failed to save onboarding details." });
+    }
+});
+
+// --- BUSINESS KNOWLEDGE BASE (products, services, info, FAQs) ---
+// Real owner-provided facts the AI answers from. The reply path injects these as
+// authoritative context so the assistant never has to invent business details.
+const VALID_KB_KINDS = ['product', 'service', 'info', 'faq'];
+
+app.get('/api/knowledge', authenticateToken, async (req, res) => {
+    const items = await db.all(
+        'SELECT id, kind, name, detail, price, created_at FROM business_knowledge WHERE user_id = ? ORDER BY kind, id DESC',
+        [req.user.id]
+    );
+    res.json(items);
+});
+
+app.post('/api/knowledge', authenticateToken, async (req, res) => {
+    try {
+        let { kind, name, detail, price } = req.body || {};
+        if (!VALID_KB_KINDS.includes(kind)) return res.status(400).json({ error: 'Invalid item type.' });
+        name = (name || '').toString().trim().slice(0, 200);
+        detail = (detail || '').toString().trim().slice(0, 2000);
+        price = (price || '').toString().trim().slice(0, 80);
+        if (!name) return res.status(400).json({ error: 'A name/title is required.' });
+        const r = await db.run(
+            'INSERT INTO business_knowledge (user_id, kind, name, detail, price, created_at) VALUES (?,?,?,?,?,?)',
+            [req.user.id, kind, name, detail, price, Math.floor(Date.now() / 1000)]
+        );
+        res.json({ ok: true, id: r.lastID });
+    } catch (e) {
+        console.error('KB add error:', e);
+        res.status(500).json({ error: 'Failed to add item.' });
+    }
+});
+
+app.delete('/api/knowledge/:id', authenticateToken, async (req, res) => {
+    await db.run('DELETE FROM business_knowledge WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+    res.json({ ok: true });
+});
+
+// Bulk import from pasted/CSV text. Each line: "Name <delim> Price <delim> Description"
+// (delimiter auto-detected: tab > pipe > comma — so pasting straight from Excel works).
+app.post('/api/knowledge/bulk', authenticateToken, async (req, res) => {
+    try {
+        const text = (req.body?.text || '').toString();
+        const kind = VALID_KB_KINDS.includes(req.body?.kind) ? req.body.kind : 'product';
+        if (!text.trim()) return res.status(400).json({ error: 'Nothing to import.' });
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const now = Math.floor(Date.now() / 1000);
+        let added = 0;
+        for (const line of lines.slice(0, 2000)) {
+            const delim = line.includes('\t') ? '\t' : (line.includes('|') ? '|' : ',');
+            const parts = line.split(delim).map(p => p.trim());
+            const name = parts[0];
+            if (!name) continue;
+            const price = (parts[1] || '').slice(0, 80);
+            const detail = (parts.slice(2).join(', ') || '').slice(0, 2000);
+            await db.run('INSERT INTO business_knowledge (user_id, kind, name, detail, price, created_at) VALUES (?,?,?,?,?,?)',
+                [req.user.id, kind, name.slice(0, 200), detail, price, now]);
+            added++;
+        }
+        res.json({ ok: true, added });
+    } catch (e) {
+        console.error('KB bulk error:', e);
+        res.status(500).json({ error: 'Bulk import failed.' });
+    }
+});
+
+// Import from a photo/PDF of a menu or price list — Gemini extracts the products.
+app.post('/api/knowledge/import-file', authenticateToken, async (req, res) => {
+    try {
+        const { dataBase64, mimeType } = req.body || {};
+        if (!dataBase64) return res.status(400).json({ error: 'No file provided.' });
+        if (!API_KEYS || API_KEYS.length === 0) return res.status(400).json({ error: 'Photo/PDF import needs a Gemini key configured.' });
+
+        const genAI = new GoogleGenerativeAI(API_KEYS[Math.floor(Math.random() * API_KEYS.length)]);
+        const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+        const prompt = `You are extracting a product/menu list from the attached image or document. Return ONLY a JSON array (no markdown, no prose). Each element: {"name": string, "price": string, "detail": string}. Use "" when price or detail is absent. Extract every distinct item you can read. Do NOT invent items that aren't shown.`;
+        const result = await model.generateContent([
+            prompt,
+            { inlineData: { data: dataBase64, mimeType: (mimeType || 'image/jpeg').split(';')[0].trim() } }
+        ]);
+
+        let txt = result.response.text().trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+        let items;
+        try { items = JSON.parse(txt); } catch (e) {
+            return res.status(422).json({ error: "Couldn't read a product list from that file. Try a clearer photo." });
+        }
+        if (!Array.isArray(items)) items = [];
+        const now = Math.floor(Date.now() / 1000);
+        let added = 0;
+        for (const it of items.slice(0, 1000)) {
+            const name = (it?.name || '').toString().trim();
+            if (!name) continue;
+            await db.run('INSERT INTO business_knowledge (user_id, kind, name, detail, price, created_at) VALUES (?,?,?,?,?,?)',
+                [req.user.id, 'product', name.slice(0, 200), (it.detail || '').toString().slice(0, 2000), (it.price || '').toString().slice(0, 80), now]);
+            added++;
+        }
+        res.json({ ok: true, added });
+    } catch (e) {
+        console.error('KB file import error:', e);
+        res.status(500).json({ error: 'File import failed.' });
+    }
+});
+
+// Change own password (works for any logged-in user, including admins).
+app.post('/api/account/password', authenticateToken, async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body || {};
+        if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters.' });
+        const user = await db.get('SELECT password_hash FROM users WHERE id = ?', [req.user.id]);
+        if (!user) return res.status(404).json({ error: 'User not found.' });
+        if (user.password_hash) {
+            const ok = await bcrypt.compare(currentPassword || '', user.password_hash);
+            if (!ok) return res.status(401).json({ error: 'Current password is incorrect.' });
+        }
+        const hash = await bcrypt.hash(newPassword, 10);
+        await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.user.id]);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('Password change error:', e);
+        res.status(500).json({ error: 'Failed to change password.' });
+    }
+});
+
 // --- ADMIN API ENDPOINTS ---
+// --- ADMIN HELPERS ---
+const isAdminReq = (req) => req.user.role === 'admin' || req.user.email === ADMIN_EMAIL;
+
+// Best-effort IP geolocation (free, no key). For production scale, swap for a paid/offline
+// provider (ipinfo/MaxMind). Fire-and-forget so it never slows down auth.
+async function geolocateAndStore(userId, ip) {
+    try {
+        if (!ip || !userId) return;
+        const clean = String(ip).replace('::ffff:', '').trim();
+        await db.run(`UPDATE users SET last_ip = ? WHERE id = ?`, [clean, userId]);
+        // Skip private / loopback addresses — they don't geolocate.
+        if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc00:|fe80:|localhost)/i.test(clean) || clean === '1') return;
+        const resp = await fetch(`http://ip-api.com/json/${clean}?fields=status,country,countryCode,city`);
+        const data = await resp.json();
+        if (data && data.status === 'success') {
+            await db.run(`UPDATE users SET country = ?, country_code = ?, city = ? WHERE id = ?`,
+                [data.country || null, data.countryCode || null, data.city || null, userId]);
+        }
+    } catch (e) {
+        console.warn('Geolocation failed:', e.message);
+    }
+}
+
+// Computes which users currently have a live (connected) WhatsApp session.
+function getOnlineUserIds() {
+    const ids = new Set();
+    for (const [globalId, s] of sessions.entries()) {
+        if (s && s.isConnected && typeof globalId === 'string') ids.add(globalId.split('_')[0]);
+    }
+    return ids;
+}
+
 app.get('/api/admin/accounts', authenticateToken, async (req, res) => {
-    if (req.user.role !== 'admin' && req.user.email !== 'timtemple2024@gmail.com') return res.status(403).json({ error: "Forbidden" });
+    if (!isAdminReq(req)) return res.status(403).json({ error: "Forbidden" });
     const users = await db.all(`
-        SELECT u.id, u.email, u.display_name, u.role, u.created_at, u.last_login,
+        SELECT u.id, u.email, u.display_name, u.role, u.account_type, u.country, u.country_code, u.city,
+               u.created_at, u.last_login, u.last_active,
         (SELECT COUNT(DISTINCT session_id) FROM contacts WHERE user_id = u.id) as session_count
-        FROM users u
+        FROM users u ORDER BY COALESCE(u.last_active, u.last_login, u.created_at) DESC
     `);
-    res.json(users);
+    const online = getOnlineUserIds();
+    res.json(users.map(u => ({ ...u, online: online.has(u.id) })));
 });
 
 app.get('/api/admin/stats', authenticateToken, async (req, res) => {
-    if (req.user.role !== 'admin' && req.user.email !== 'timtemple2024@gmail.com') return res.status(403).json({ error: "Forbidden" });
-    const totalUsers = await db.get('SELECT COUNT(*) as count FROM users');
-    const totalSessions = await db.get('SELECT COUNT(DISTINCT session_id) FROM contacts');
-    const totalMessages = await db.get('SELECT COUNT(*) as count FROM messages');
-    const failedRequests = await db.get('SELECT COUNT(*) as count FROM request_logs WHERE status = "failed"');
-    
+    if (!isAdminReq(req)) return res.status(403).json({ error: "Forbidden" });
+    const now = Math.floor(Date.now() / 1000);
+    const dayAgo = now - 86400;
+
+    const totalUsers = (await db.get('SELECT COUNT(*) as c FROM users')).c;
+    const totalMessages = (await db.get('SELECT COUNT(*) as c FROM messages')).c;
+    const failedRequests = (await db.get(`SELECT COUNT(*) as c FROM request_logs WHERE status = 'failed'`)).c;
+    const active24h = (await db.get('SELECT COUNT(*) as c FROM users WHERE COALESCE(last_active, last_login, 0) >= ?', [dayAgo])).c;
+    const newToday = (await db.get('SELECT COUNT(*) as c FROM users WHERE created_at >= ?', [dayAgo])).c;
+
+    const online = getOnlineUserIds();
+    let liveSessions = 0;
+    for (const [, s] of sessions.entries()) if (s && s.isConnected) liveSessions++;
+
+    const byType = await db.all(`SELECT COALESCE(NULLIF(account_type,''),'unset') as type, COUNT(*) as c FROM users GROUP BY type ORDER BY c DESC`);
+    const byCountry = await db.all(`SELECT COALESCE(NULLIF(country,''),'Unknown') as country, country_code, COUNT(*) as c FROM users GROUP BY country ORDER BY c DESC LIMIT 50`);
+
     res.json({
-        totalUsers: totalUsers.count,
-        totalSessions: totalSessions['COUNT(DISTINCT session_id)'],
-        totalMessages: totalMessages.count,
-        failedRequests: failedRequests ? failedRequests.count : 0
+        totalUsers, totalMessages, failedRequests,
+        active24h, newToday,
+        onlineUsers: online.size, liveSessions,
+        byType, byCountry
     });
+});
+
+// --- AI OPS ADMIN: ask DeepSeek about the live platform state ---
+app.post('/api/admin/ai', authenticateToken, async (req, res) => {
+    if (!isAdminReq(req)) return res.status(403).json({ error: "Forbidden" });
+    try {
+        const question = (req.body?.question || '').toString().slice(0, 1000);
+        if (!question) return res.status(400).json({ error: "Ask a question." });
+
+        const now = Math.floor(Date.now() / 1000);
+        const dayAgo = now - 86400;
+        const totalUsers = (await db.get('SELECT COUNT(*) as c FROM users')).c;
+        const active24h = (await db.get('SELECT COUNT(*) as c FROM users WHERE COALESCE(last_active,last_login,0) >= ?', [dayAgo])).c;
+        const byType = await db.all(`SELECT COALESCE(NULLIF(account_type,''),'unset') as type, COUNT(*) as c FROM users GROUP BY type`);
+        const byCountry = await db.all(`SELECT COALESCE(NULLIF(country,''),'Unknown') as country, COUNT(*) as c FROM users GROUP BY country ORDER BY c DESC LIMIT 15`);
+        const recentErrors = await db.all(`SELECT engine, model, status FROM request_logs WHERE status='failed' ORDER BY id DESC LIMIT 15`);
+        const online = getOnlineUserIds();
+        let liveSessions = 0; for (const [, s] of sessions.entries()) if (s && s.isConnected) liveSessions++;
+
+        const context = {
+            totalUsers, activeUsers24h: active24h, onlineUsers: online.size, liveWhatsappSessions: liveSessions,
+            accountTypes: byType, topCountries: byCountry, recentFailedAiRequests: recentErrors,
+            primaryEngine: 'DeepSeek (deepseek-chat)', visionAudioEngine: GEMINI_MODEL
+        };
+
+        const systemPrompt = `You are the AI Operations Admin for "Chaka", a multi-tenant WhatsApp AI assistant SaaS. You help the platform owner oversee and troubleshoot the system. Answer ONLY from the live data provided below — never invent numbers. Be concise, concrete, and proactive: surface anything notable (errors, drop-offs, concentration of users). If the owner asks you to FIX something, explain the exact steps and clearly flag anything that needs a human to execute (you can advise but do not claim to have changed the system). \n\nLIVE PLATFORM DATA:\n${JSON.stringify(context, null, 2)}`;
+
+        const answer = await tryDeepSeekFailover(req.user.id, 'admin-ai', systemPrompt, question);
+        res.json({ answer: answer || "I couldn't reach the AI engine right now. Try again in a moment.", context });
+    } catch (e) {
+        console.error("Admin AI error:", e);
+        res.status(500).json({ error: "AI admin failed." });
+    }
 });
 
 // Socket.IO JWT Authentication Middleware
@@ -919,6 +1465,16 @@ function extractContent(msg) {
         };
     }
 
+    // 3b. Handle Voice Notes / Audio (transcribed downstream via Gemini)
+    if (msg.audioMessage) {
+        return {
+            type: 'audio',
+            text: null,
+            mimeType: msg.audioMessage.mimetype || 'audio/ogg',
+            msg: msg.audioMessage
+        };
+    }
+
     // 4. Handle Stickers
     if (msg.stickerMessage) {
         return {
@@ -961,7 +1517,7 @@ async function saveMessageToDB(userId, sessionId, msg, forceSkipEmbedding = fals
         const content = extractContent(msg.message);
         const jid = msg.key.remoteJid;
 
-        if (!content.text && content.type !== 'sticker' && content.type !== 'image') {
+        if (!content.text && content.type !== 'sticker' && content.type !== 'image' && content.type !== 'audio') {
             if (!forceSkipEmbedding) console.log(`[${globalId}] ⏭ Skipping: No text content found.`);
             return null;
         }
@@ -994,6 +1550,25 @@ async function saveMessageToDB(userId, sessionId, msg, forceSkipEmbedding = fals
             } catch (e) {
                 console.error("Vision trigger failed:", e.message);
                 content.text = content.text ? `[IMAGE] ${content.text}` : `[IMAGE]`;
+            }
+        }
+
+        // --- VOICE NOTE ENGINE ---
+        if (content.type === 'audio') {
+            try {
+                console.log(`[${globalId}] 🎙️ Voice note detected. Transcribing...`);
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                if (buffer) {
+                    const transcript = await transcribeAudio(userId, sessionId, buffer, content.mimeType);
+                    content.text = transcript
+                        ? `[VOICE NOTE: ${transcript}]`
+                        : `[VOICE NOTE]`;
+                } else {
+                    content.text = `[VOICE NOTE]`;
+                }
+            } catch (e) {
+                console.error("Voice transcription failed:", e.message);
+                content.text = `[VOICE NOTE]`;
             }
         }
 
@@ -1182,6 +1757,100 @@ async function reindexDatabase(sessionId) {
     }
 }
 
+// --- KNOWLEDGE GRAPH EXTRACTOR ---
+async function extractKnowledgeTriples(userId, sessionId, contactId) {
+    try {
+        const globalId = `${userId}_${sessionId}`;
+        // Fetch the last 8 messages
+        const messages = await db.all(
+            `SELECT sender, text FROM messages 
+             WHERE session_id = ? AND contact_id = ? AND user_id = ? 
+             ORDER BY timestamp DESC LIMIT 8`, 
+            [sessionId, contactId, userId]
+        );
+        if (messages.length < 2) return;
+        messages.reverse();
+        
+        const conversationScript = messages.map(m => `${m.sender}: ${m.text}`).join('\n');
+        
+        const systemPrompt = `You are a background memory graph extractor. Extract permanent facts, user preferences, AND the user's specific texting style for this contact from the conversation.
+Return ONLY a valid JSON array of arrays, representing [Subject, Predicate, Object] triples.
+Example output:
+[["User", "loves", "coffee"], ["User Style", "uses emojis", "💀 and 😭"], ["User Tone", "is", "highly informal and uses lowercase"], ["John", "is", "User's boss"]]
+If no new permanent facts or style rules are found, return []. Do not include transient states.`;
+
+        const reply = await orchestrateAIResponse(userId, globalId, systemPrompt, conversationScript);
+        if (!reply) return;
+        
+        let jsonStr = reply;
+        const match = reply.match(/\[.*\]/s);
+        if (match) jsonStr = match[0];
+        
+        const triples = JSON.parse(jsonStr);
+        if (Array.isArray(triples) && triples.length > 0) {
+            console.log(`[${sessionId}] 🧠 Graph Extracted: ${triples.length} new facts`);
+            for (const triple of triples) {
+                if (Array.isArray(triple) && triple.length >= 3) {
+                    await db.run(
+                        `INSERT INTO knowledge_graph (session_id, contact_id, subject, predicate, object, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
+                        [sessionId, contactId, String(triple[0]), String(triple[1]), String(triple[2]), Math.floor(Date.now() / 1000)]
+                    );
+                }
+            }
+        }
+    } catch (e) {
+        // Silently fail if JSON parse fails or extraction fails
+    }
+}
+
+// --- HERMES / LOCAL AGENT PIPELINE (Phase 2) ---
+async function searchWeb(query) {
+    try {
+        console.log(`[AGENT] 🌐 Performing background web search for: "${query}"`);
+        const response = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        });
+        const html = await response.text();
+        const $ = cheerio.load(html);
+        let results = [];
+        $('.result__snippet').each((i, el) => {
+            if (i < 3) results.push($(el).text().trim());
+        });
+        if (results.length > 0) return results.join(' | ');
+        return "No clear results found.";
+    } catch (e) {
+        console.error("[AGENT] Web search failed:", e.message);
+        return "Search failed.";
+    }
+}
+
+async function runLocalAgentRouter(incomingText) {
+    // We use the local ollama instance (e.g. qwen2.5-coder:7b) for zero-cost routing
+    try {
+        const prompt = `You are an internal routing agent. Analyze this incoming message: "${incomingText}". 
+Does the user explicitly ask to look up facts, search the web, check news, or require real-time information? If the answer requires any external information you do not have, you MUST return true.
+Respond ONLY with a JSON object. No markdown, no conversational text.
+Format: {"requires_search": true, "search_query": "the concise search query to look up"}`;
+        
+        const response = await fetch('http://localhost:11434/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: 'qwen2.5-coder:7b',
+                prompt: prompt,
+                stream: false
+            })
+        });
+        const data = await response.json();
+        const rawJson = data.response.trim().replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(rawJson);
+        return parsed;
+    } catch (e) {
+        // Router failed, safe default
+        return { requires_search: false };
+    }
+}
+
 async function generateSmartReply(userId, sessionId, contactName, contactId, incomingMsg) {
     const globalId = `${userId}_${sessionId}`;
 
@@ -1219,16 +1888,35 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
     console.log(`[${sessionId}] 💰 Budget: ${availableTokens}/${MAX_TPM} | CTX:${contextLimit} MEM:${memoryLimit} STYLE:${includeStyle}`);
 
+    let agentContext = "";
+    try {
+        const agentDecision = await runLocalAgentRouter(incomingMsg);
+        if (agentDecision && agentDecision.requires_search && agentDecision.search_query) {
+            io.emit('log', { sessionId, msg: `🤖 Agent performing web search for: ${agentDecision.search_query}` });
+            const searchResults = await searchWeb(agentDecision.search_query);
+            agentContext = `[WEB SEARCH RESULTS for "${agentDecision.search_query}"]\n${searchResults}\n\n`;
+            io.emit('log', { sessionId, msg: `✅ Search complete. Injected into AI context.` });
+        }
+    } catch (e) { console.error("Agent error:", e); }
+
     try {
         const contactRow = await db.get(`SELECT custom_prompt FROM contacts WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [sessionId, contactId, userId]);
         const globalRow = await db.get(`SELECT * FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
 
-        console.log(`[${sessionId}] 🧠 AI Brain: Engine=${activeEngine.toUpperCase()} | Contact Settings: ${contactRow ? 'Found' : 'Default'}`);
+        // Account type drives tone: business/freelancer stay professional and on-persona;
+        // personal/creator mirror the owner's casual texting style.
+        const userRow = await db.get(`SELECT account_type FROM users WHERE id = ?`, [userId]);
+        const accountType = userRow?.account_type || 'personal';
+        const isProfessional = accountType === 'business' || accountType === 'freelancer';
+
+        console.log(`[${sessionId}] 🧠 AI Brain: Engine=${activeEngine.toUpperCase()} | Type=${accountType} | Contact Settings: ${contactRow ? 'Found' : 'Default'}`);
 
         // ── RECENT CONVERSATION (scoped to THIS contact only) ──
+        // CRITICAL: Exclude bot-generated messages to prevent the AI from mimicking its own prior outputs
         const recentHistoryRows = await db.all(
-            `SELECT sender, text FROM messages 
+            `SELECT sender, text, message_id FROM messages 
              WHERE session_id = ? AND contact_id = ? AND user_id = ? 
+             AND message_id NOT LIKE 'BOT_%'
              ORDER BY timestamp DESC LIMIT ?`,
             [sessionId, contactId, userId, contextLimit]
         );
@@ -1299,6 +1987,40 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
         // Build memory block — compact format to save tokens
         let memoryDetails = "";
+        
+        if (agentContext) {
+            memoryDetails += agentContext;
+        }
+
+        // LAYER 3: GraphRAG Knowledge Graph Fetch
+        let graphFacts = [];
+        try {
+            if (keywords.length > 0) {
+                const placeholders = keywords.map(() => `(subject LIKE ? OR predicate LIKE ? OR object LIKE ?)`).join(' OR ');
+                const params = keywords.flatMap(k => [`%${k}%`, `%${k}%`, `%${k}%`]);
+                graphFacts = await db.all(
+                    `SELECT subject, predicate, object FROM knowledge_graph 
+                     WHERE session_id = ? AND contact_id = ? 
+                     AND (${placeholders})
+                     ORDER BY timestamp DESC LIMIT 5`, 
+                    [sessionId, contactId, ...params]
+                );
+            }
+            // Always include a few general facts if few keyword matches
+            if (graphFacts.length < 5) {
+                const extraFacts = await db.all(
+                    `SELECT subject, predicate, object FROM knowledge_graph 
+                     WHERE session_id = ? AND contact_id = ? 
+                     ORDER BY timestamp DESC LIMIT ?`, 
+                    [sessionId, contactId, 5 - graphFacts.length]
+                );
+                graphFacts = graphFacts.concat(extraFacts);
+            }
+            if (graphFacts.length > 0) {
+                const uniqueFacts = Array.from(new Set(graphFacts.map(f => `${f.subject} -> ${f.predicate} -> ${f.object}`)));
+                memoryDetails += `[KNOWN FACTS]\n${uniqueFacts.join('\n')}\n\n`;
+            }
+        } catch(e) { console.error("Graph fetch err:", e); }
 
         if (keywordMemories.length > 0) {
             const kwBlock = keywordMemories.map(m => `${m.sender}: ${m.text}`).join('\n');
@@ -1324,7 +2046,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         const pinnedFacts = await db.all(
             `SELECT text FROM messages 
              WHERE session_id = ? AND contact_id = ? AND user_id = ? AND is_from_me = 0
-             AND (text LIKE '%my name%' OR text LIKE '%I am%' OR text LIKE '%I'm%' 
+             AND (text LIKE '%my name%' OR text LIKE '%I am%' OR text LIKE '%I''m%' 
                   OR text LIKE '%I work%' OR text LIKE '%I live%' OR text LIKE '%I have%'
                   OR text LIKE '%my number%' OR text LIKE '%remember%' OR text LIKE '%birthday%')
              ORDER BY timestamp ASC LIMIT 5`,
@@ -1337,15 +2059,28 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         }
 
         // ── STYLE LEARNING (only when budget allows) ──
+        // NOTE: Style context is kept minimal to prevent feedback loops
+        // Professional accounts follow the persona's tone, NOT the owner's casual style,
+        // so we don't feed casual style samples that would pull replies off-brand.
         let styleContext = "";
-        if (includeStyle) {
+        if (includeStyle && !isProfessional) {
             const styleSamples = await fetchUserStyleSamples(userId, sessionId, contactId);
             if (styleSamples) {
-                styleContext = `[MY REPLY STYLE]\n${styleSamples}\nMIRROR this tone, length and style.\n\n`;
+                styleContext = `[YOUR TEXTING STYLE FOR REFERENCE]\n${styleSamples}\n\n`;
             }
         }
 
-        const conversationScript = recentHistory.map(h => `${h.sender}: ${h.text}`).join('\n');
+        // Build conversation script with dedup (strip consecutive identical messages)
+        const dedupedHistory = [];
+        let lastText = '';
+        for (const h of recentHistory) {
+            const currentText = (h.text || '').trim().toLowerCase();
+            if (currentText && currentText !== lastText) {
+                dedupedHistory.push(h);
+                lastText = currentText;
+            }
+        }
+        const conversationScript = dedupedHistory.map(h => `${h.sender}: ${h.text}`).join('\n');
         const effectivePrompt = (contactRow && contactRow.custom_prompt) || (globalRow && globalRow.custom_prompt) || "";
         // Fetch available stickers for this contact
         let stickerContext = "";
@@ -1360,9 +2095,39 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             }
         } catch(e) { /* sticker fetch failed, no biggie */ }
 
-        // --- USER-DEFINED PERSONA ---
+        // --- USER-DEFINED PERSONA (authoritative) ---
         const userPersona = contactRow?.custom_prompt || globalRow?.custom_prompt || "You are a helpful assistant.";
-        let systemInstruction = `${userPersona}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}`;
+
+        // --- BUSINESS KNOWLEDGE BASE injection (real owner-provided facts) ---
+        let kbContext = '';
+        try {
+            const kbItems = await db.all('SELECT kind, name, detail, price FROM business_knowledge WHERE user_id = ? LIMIT 200', [userId]);
+            if (kbItems.length) {
+                const offerings = kbItems.filter(i => i.kind === 'product' || i.kind === 'service')
+                    .map(i => `- ${i.name}${i.price ? ` — ${i.price}` : ''}${i.detail ? `: ${i.detail}` : ''}`);
+                const info = kbItems.filter(i => i.kind === 'info').map(i => `- ${i.name}: ${i.detail || ''}`);
+                const faqs = kbItems.filter(i => i.kind === 'faq').map(i => `- Q: ${i.name}\n  A: ${i.detail || ''}`);
+                kbContext = `\n\n[BUSINESS INFO — these are the ONLY verified facts you know about this business. Answer questions using these. If something a customer asks about is NOT listed here, do not invent it — say you'll check with the owner.]`;
+                if (offerings.length) kbContext += `\nProducts / Services:\n${offerings.join('\n')}`;
+                if (info.length) kbContext += `\nBusiness details:\n${info.join('\n')}`;
+                if (faqs.length) kbContext += `\nFAQs:\n${faqs.join('\n')}`;
+            }
+        } catch (e) { /* KB fetch failed — fall back to grounding rules */ }
+
+        const scheduleRule = `- If the user asks you to remind them or someone else to do something later, output exactly: [SCHEDULE_MESSAGE: <YYYY-MM-DDTHH:MM:SSZ> | <ContactName OR "CURRENT"> | <The reminder message to send later>]. Use "CURRENT" if it's for the person you are currently talking to. Also include a brief immediate text acknowledging the schedule.`;
+
+        // Persona is the source of truth. For professional accounts we explicitly forbid
+        // the model from copying the other person's casual tone (the cause of off-brand
+        // replies like "yo what's good" from a business assistant).
+        const personaHeader = isProfessional
+            ? `You MUST stay fully in character as defined below at ALL times. This role and its tone are authoritative and override the casual style of anyone you're talking to.\n\n${userPersona}`
+            : userPersona;
+
+        const rulesBlock = isProfessional
+            ? `[RULES]\n- Always keep the role, voice, and tone described above. Never slip into slang, text-speak, or all-lowercase "lazy" texting, even if the other person does.\n- Be professional, warm, and genuinely helpful. Use correct grammar, spelling, and capitalization.\n- Keep replies concise (1-3 sentences) but complete — actually answer what was asked.\n- NEVER invent or assume business details — products, prices, services, stock, availability, hours, address, delivery, ordering or booking systems, discounts, or policies. Only state what's in your instructions above. If you weren't told it, you don't offer it.\n- Do NOT proactively pitch orders, bookings, or services. Let the person say what they need; if it's something you have no info on, offer to take their details for the owner to follow up.\n- If you don't know a specific detail, say you'll check rather than guessing or making it up.\n- Reply with ONE message only. Never repeat yourself or echo earlier phrases verbatim.\n- Light, fitting emoji use is okay; don't overdo it.\n${scheduleRule}`
+            : `[RULES]\n- Reply with ONE single message only. NEVER repeat yourself.\n- Keep replies extremely short, lazy, and conversational (1-2 lines max).\n- DO NOT act like an AI or an eager assistant. Be a normal human texting.\n- STOP asking follow-up questions constantly. Only ask a question if completely necessary to continue the exact topic.\n- DO NOT use perfect grammar, punctuation, or capitalization unless the user does.\n- MATCH THE EXACT STYLE AND VIBE OF THE PROVIDED STYLE SAMPLES.\n- ONLY use emojis if they perfectly match the user's current tone and style samples. Do not overuse them.\n- NEVER repeat any phrase from the conversation history verbatim.\n- If you don't know something, say so briefly. Don't make things up.\n${scheduleRule}`;
+
+        let systemInstruction = `[CURRENT TIME: ${new Date().toISOString()}]\n${personaHeader}${kbContext}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}\n\n${rulesBlock}`;
 
         // ── BUILD FINAL PROMPT (token-efficient format) ──
         let userPrompt = '';
@@ -1411,6 +2176,56 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         if (replyText.startsWith(`${MY_NAME}:`)) replyText = replyText.replace(`${MY_NAME}:`, '').trim();
         if (replyText.startsWith(`"`)) replyText = replyText.replace(/^"|"$/g, '').trim();
 
+        // REPETITION GUARD: Detect and strip repeated lines
+        const lines = replyText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const seen = new Set();
+        const uniqueLines = [];
+        for (const line of lines) {
+            const normalized = line.toLowerCase();
+            if (!seen.has(normalized)) {
+                seen.add(normalized);
+                uniqueLines.push(line);
+            }
+        }
+        replyText = uniqueLines.join('\n').trim();
+
+        // If after dedup the reply is empty or too short, return null
+        if (!replyText || replyText.length < 2) return null;
+
+        // RESPONSE VALIDATION: Reject if this response matches any previous bot reply to this contact
+        try {
+            const recentBotReplies = await db.all(
+                `SELECT text FROM messages 
+                 WHERE session_id = ? AND contact_id = ? AND user_id = ? 
+                 AND message_id LIKE 'BOT_%'
+                 ORDER BY timestamp DESC LIMIT 10`,
+                [sessionId, contactId, userId]
+            );
+            const replyLower = replyText.toLowerCase().trim();
+            const isDuplicateReply = recentBotReplies.some(r => 
+                r.text && r.text.toLowerCase().trim() === replyLower
+            );
+            if (isDuplicateReply) {
+                console.warn(`[${sessionId}] 🚨 BLOCKED: AI tried to repeat a previous response. Retrying with anti-repeat instruction...`);
+                // Retry ONCE with explicit anti-repetition prompt
+                const retryPrompt = userPrompt + `\n\n[CRITICAL: Your previous response "${replyText}" was already sent before. You MUST say something COMPLETELY DIFFERENT. Respond to the latest message naturally.]`;
+                let retryText = await orchestrateAIResponse(userId, globalId, systemInstruction, retryPrompt);
+                if (retryText) {
+                    if (retryText.startsWith(`${MY_NAME}:`)) retryText = retryText.replace(`${MY_NAME}:`, '').trim();
+                    if (retryText.startsWith(`"`)) retryText = retryText.replace(/^"|"$/g, '').trim();
+                    const retryLower = retryText.toLowerCase().trim();
+                    if (!recentBotReplies.some(r => r.text && r.text.toLowerCase().trim() === retryLower)) {
+                        console.log(`[${sessionId}] ✅ Retry produced a fresh response.`);
+                        return retryText;
+                    }
+                }
+                console.warn(`[${sessionId}] 🚨 Retry also repeated. Suppressing to avoid spam.`);
+                return null;
+            }
+        } catch (e) {
+            console.error(`[${sessionId}] Response validation error:`, e.message);
+        }
+
         return replyText;
     } catch (error) {
         console.error(`[${sessionId}] AI Error:`, error);
@@ -1440,10 +2255,18 @@ async function startSession(userId, sessionId) {
     const authPath = `./data/auth_baileys_${globalId}`;
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
 
-    // Use a verified latest version directly to avoid 405/rejections
-    const version = [2, 3000, 1033846690];
-    const isLatest = true;
-    console.log(`[${globalId}] 📦 Forced WA Version: ${version.join('.')} (Latest: ${isLatest})`);
+    // Fetch the CURRENT WhatsApp Web version. A stale/hard-coded version makes the
+    // server stall the Noise handshake (no QR ever appears), so we resolve it live and
+    // only fall back to a known-recent build if the lookup fails.
+    let version, isLatest;
+    try {
+        ({ version, isLatest } = await fetchLatestBaileysVersion());
+    } catch (e) {
+        version = [2, 3000, 1035194821];
+        isLatest = false;
+        console.warn(`[${globalId}] ⚠️ Could not fetch latest WA version, using fallback ${version.join('.')}: ${e.message}`);
+    }
+    console.log(`[${globalId}] 📦 WA Version: ${version.join('.')} (Latest: ${isLatest})`);
 
     const store = createStore();
     const phonebook = {};
@@ -1670,11 +2493,15 @@ async function startSession(userId, sessionId) {
             } catch (e) { console.error("Scrape check failed:", e); }
 
             // AUTO REPLY LOGIC
-            const globalDoc = await db.get(`SELECT master_auto_reply FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
+            const globalDoc = await db.get(`SELECT master_auto_reply, global_draft_mode FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
             const masterEnabled = globalDoc ? (globalDoc.master_auto_reply === 1) : true;
+            const globalDraftMode = globalDoc ? (globalDoc.global_draft_mode === 1) : false;
 
-            const contactSettings = await db.get(`SELECT auto_reply FROM contacts WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [sessionId, cleanId, userId]);
+            const contactSettings = await db.get(`SELECT auto_reply, draft_mode FROM contacts WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [sessionId, cleanId, userId]);
             const contactAutoReply = contactSettings ? (contactSettings.auto_reply === 1) : true;
+            const contactDraftMode = contactSettings ? (contactSettings.draft_mode === 1) : false;
+            
+            const isDraftMode = globalDraftMode || contactDraftMode;
 
             console.log(`[${sessionId}] 🤖 AI Check | Master: ${masterEnabled ? 'ON' : 'OFF'} | Contact (${contactName}): ${contactAutoReply ? 'ON' : 'OFF'}`);
 
@@ -1699,9 +2526,61 @@ async function startSession(userId, sessionId) {
 
             // GENERATE REPLY
             try {
-                const replyText = await generateSmartReply(userId, sessionId, contactName, cleanId, content.text);
+                let replyText = await generateSmartReply(userId, sessionId, contactName, cleanId, content.text);
 
                 if (replyText) {
+                    // INTERCEPT SCHEDULED MESSAGES
+                    const scheduleRegex = /\[SCHEDULE_MESSAGE:\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^\]]+)\]/i;
+                    const scheduleMatch = replyText.match(scheduleRegex);
+                    if (scheduleMatch) {
+                        try {
+                            const dateStr = scheduleMatch[1].trim();
+                            const targetStr = scheduleMatch[2].trim();
+                            const schedMsg = scheduleMatch[3].trim();
+                            
+                            let targetContactId = cleanId;
+                            let targetContactName = contactName;
+                            
+                            if (targetStr.toUpperCase() !== 'CURRENT') {
+                                // Attempt fuzzy match for the target contact
+                                const foundContact = await db.get(`SELECT contact_id, name FROM contacts WHERE session_id = ? AND user_id = ? AND name LIKE ? LIMIT 1`, 
+                                    [sessionId, userId, `%${targetStr}%`]);
+                                if (foundContact) {
+                                    targetContactId = foundContact.contact_id;
+                                    targetContactName = foundContact.name;
+                                }
+                            }
+                            
+                            const parsedMs = Date.parse(dateStr);
+                            if (!isNaN(parsedMs)) {
+                                const sendAt = Math.floor(parsedMs / 1000);
+                                await db.run(`INSERT INTO scheduled_messages (user_id, session_id, contact_id, message, send_at_timestamp) VALUES (?, ?, ?, ?, ?)`,
+                                    [userId, sessionId, targetContactId, schedMsg, sendAt]);
+                                io.emit('log', { sessionId, msg: `⏰ Scheduled message for ${targetContactName} at ${dateStr}` });
+                            }
+                        } catch (e) {
+                            console.error("Schedule Parse Error", e);
+                        }
+                        replyText = replyText.replace(scheduleRegex, '').trim();
+                    }
+
+                    if (!replyText || replyText.length === 0) continue;
+                    if (isDraftMode) {
+                        console.log(`[${sessionId}] 📝 DRAFT MODE ENABLED. Emitting draft instead of sending.`);
+                        io.emit('new_draft', {
+                            sessionId,
+                            contactId: cleanId,
+                            contactName,
+                            userId,
+                            jid,
+                            originalMessage: content.text,
+                            draftText: replyText,
+                            timestamp: Date.now()
+                        });
+                        io.emit('log', { sessionId, msg: `📝 Draft generated for ${contactName} (waiting for approval)` });
+                        continue; // Skip actual sending
+                    }
+
                     // STICKER REDIRECT
                     const stickerMatch = replyText.match(/\[STICKER: ([a-f0-9]+)\]/i);
                     if (stickerMatch) {
@@ -1731,6 +2610,9 @@ async function startSession(userId, sessionId) {
                     const botId = 'BOT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
                     await db.run(`INSERT INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         [botId, sessionId, cleanId, userId, replyText, MY_NAME, Math.floor(Date.now() / 1000), new Date().toISOString(), 1, null]);
+
+                    // Trigger Graph Extraction asynchronously
+                    extractKnowledgeTriples(userId, sessionId, cleanId).catch(err => console.error("Graph extraction failed:", err));
 
                     io.emit('log', { sessionId, msg: `🚀 Replied to ${contactName}` });
                 } else {
@@ -1829,10 +2711,9 @@ io.on('connection', (socket) => {
             config: {
                 globalPrompt: config?.custom_prompt || '',
                 masterAutoReply: config ? config.master_auto_reply === 1 : true,
-                aiEngine: config?.active_api || 'gemini',
-                chakaModel: config?.chaka_model || 'chaka-medium',
-                apiKeys: config?.api_keys ? JSON.parse(config.api_keys) : []
-            } 
+                aiEngine: config?.active_api || 'deepseek',
+                chakaModel: config?.chaka_model || 'chaka-medium'
+            }
         });
     });
 
@@ -1843,7 +2724,7 @@ io.on('connection', (socket) => {
         const existing = await db.get(`SELECT id FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
         if (!existing) {
             await db.run(`INSERT INTO global_settings (id, user_id, custom_prompt, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, ?, ?, ?, ?)`,
-                [userId, globalPrompt || '', masterAutoReply === false ? 0 : 1, aiEngine || 'gemini', chakaModel || 'chaka-medium']);
+                [userId, globalPrompt || '', masterAutoReply === false ? 0 : 1, aiEngine || 'deepseek', chakaModel || 'chaka-medium']);
         } else {
             if (globalPrompt !== undefined) await db.run(`UPDATE global_settings SET custom_prompt = ? WHERE id = 'settings' AND user_id = ?`, [globalPrompt, userId]);
             if (masterAutoReply !== undefined) await db.run(`UPDATE global_settings SET master_auto_reply = ? WHERE id = 'settings' AND user_id = ?`, [masterAutoReply ? 1 : 0, userId]);
@@ -1879,31 +2760,17 @@ io.on('connection', (socket) => {
         socket.emit('log', { sessionId: data.sessionId, msg: `🎯 Entity Settings Updated` });
     });
 
+    // --- AI keys are platform-hosted (env), not user-supplied ---
+    // These handlers are retained as no-ops for backwards-compat with older clients;
+    // the dashboard no longer exposes key management. They never store user keys.
     socket.on('list_api_keys', async () => {
-        if (!userId) return;
-        const config = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-        const keys = config?.api_keys ? JSON.parse(config.api_keys) : [];
-        socket.emit('api_keys_list', keys);
+        socket.emit('api_keys_list', []);
     });
-
-    socket.on('add_api_key', async (key) => {
-        if (!userId || !key) return;
-        const config = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-        let keys = config?.api_keys ? JSON.parse(config.api_keys) : [];
-        if (!keys.includes(key)) {
-            keys.push(key);
-            await db.run(`UPDATE global_settings SET api_keys = ? WHERE id = 'settings' AND user_id = ?`, [JSON.stringify(keys), userId]);
-        }
-        socket.emit('api_keys_list', keys);
+    socket.on('add_api_key', async () => {
+        socket.emit('api_keys_list', []);
     });
-
-    socket.on('delete_api_key', async (key) => {
-        if (!userId || !key) return;
-        const config = await db.get(`SELECT api_keys FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-        let keys = config?.api_keys ? JSON.parse(config.api_keys) : [];
-        keys = keys.filter(k => k !== key);
-        await db.run(`UPDATE global_settings SET api_keys = ? WHERE id = 'settings' AND user_id = ?`, [JSON.stringify(keys), userId]);
-        socket.emit('api_keys_list', keys);
+    socket.on('delete_api_key', async () => {
+        socket.emit('api_keys_list', []);
     });
 
     socket.on('fetch_db_sessions', async () => {
@@ -1938,14 +2805,82 @@ io.on('connection', (socket) => {
             [userId, data.sessionId, data.contactId]);
         socket.emit('chat_history', { sessionId: data.sessionId, contactId: data.contactId, messages: rows.reverse() });
     });
+
+    socket.on('approve_draft', async (data) => {
+        if (!userId || !data.sessionId || !data.jid || !data.draftText) return;
+        const globalId = `${userId}_${data.sessionId}`;
+        const session = sessions.get(globalId);
+        if (session && session.sock) {
+            try {
+                await session.sock.sendPresenceUpdate('composing', data.jid);
+                await delay(500);
+                await session.sock.sendMessage(data.jid, { text: data.draftText });
+                
+                const botId = 'BOT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+                await db.run(`INSERT INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [botId, data.sessionId, data.contactId, userId, data.draftText, MY_NAME, Math.floor(Date.now() / 1000), new Date().toISOString(), 1, null]);
+
+                extractKnowledgeTriples(userId, data.sessionId, data.contactId).catch(err => console.error(err));
+                io.emit('log', { sessionId: data.sessionId, msg: `🚀 Draft Sent to ${data.contactName}` });
+            } catch (err) {
+                console.error("Failed to send draft:", err);
+            }
+        }
+    });
+
+    socket.on('toggle_draft_mode', async (data) => {
+        if (!userId) return;
+        if (data.type === 'global') {
+            await db.run(`UPDATE global_settings SET global_draft_mode = ? WHERE id = 'settings' AND user_id = ?`, [data.enabled ? 1 : 0, userId]);
+        } else if (data.type === 'contact' && data.sessionId && data.contactId) {
+            await db.run(`UPDATE contacts SET draft_mode = ? WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [data.enabled ? 1 : 0, data.sessionId, data.contactId, userId]);
+        }
+    });
 });
 
 // --- BOOT SEQUENCE ---
 async function bootServer() {
     const PORT = process.env.PORT || 3000;
-    server.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Server running and listening on http://0.0.0.0:${PORT}`);
-    });
+// Fail fast on listen errors (e.g. port already in use). The global
+// uncaughtException handler would otherwise swallow these and leave the
+// process "running" without an HTTP listener.
+server.on('error', (err) => {
+    console.error(`💥 FATAL: HTTP server failed to start: ${err.message}`);
+    process.exit(1);
+});
+server.listen(PORT, '0.0.0.0', async () => {
+    console.log(`🚀 Server running and listening on http://0.0.0.0:${PORT}`);
+    
+    // --- START CRON-BRAIN (PHASE 3) ---
+    setInterval(async () => {
+        try {
+            const now = Math.floor(Date.now() / 1000);
+            const dueMessages = await db.all(`SELECT * FROM scheduled_messages WHERE status = 'pending' AND send_at_timestamp <= ?`, [now]);
+            for (const sched of dueMessages) {
+                console.log(`[CRON] ⏰ Sending scheduled message to ${sched.contact_id}...`);
+                const globalId = `${sched.user_id}_${sched.session_id}`;
+                const session = sessions.get(globalId);
+                if (session && session.sock) {
+                    const jid = sched.contact_id.includes('@s.whatsapp.net') || sched.contact_id.includes('@g.us') || sched.contact_id.includes('@lid')
+                                ? sched.contact_id 
+                                : `${sched.contact_id}@s.whatsapp.net`;
+                    await session.sock.sendMessage(jid, { text: sched.message });
+                    
+                    // Save as BOT_CRON
+                    await db.run(`INSERT INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        ['BOT_CRON_' + Date.now(), sched.session_id, sched.contact_id, sched.user_id, sched.message, MY_NAME, Math.floor(Date.now() / 1000), new Date().toISOString(), 1]);
+                    
+                    io.emit('log', { sessionId: sched.session_id, msg: `⏰ Scheduled message sent to ${sched.contact_id}!` });
+                    await db.run(`UPDATE scheduled_messages SET status = 'sent' WHERE id = ?`, [sched.id]);
+                } else {
+                    console.error(`[CRON] Error: Session not found for ${globalId}`);
+                }
+            }
+        } catch (e) {
+            console.error("[CRON] Error:", e.message);
+        }
+    }, 60000); // Check every 60 seconds
+});
 
     await initDB();
     await initLocalAI();
@@ -1977,5 +2912,36 @@ async function bootServer() {
         }
     }
 }
+
+// --- GRACEFUL SHUTDOWN ---
+// Fly.io (and most orchestrators) send SIGTERM before stopping a machine. Close the
+// HTTP server and the database cleanly so in-flight requests finish and SQLite is not
+// left mid-write. A hard timeout guards against hanging connections.
+let shuttingDown = false;
+async function gracefulShutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n🛑 Received ${signal} — shutting down gracefully...`);
+
+    const forceExit = setTimeout(() => {
+        console.error("⏱️ Shutdown timed out, forcing exit.");
+        process.exit(1);
+    }, 15000);
+    forceExit.unref();
+
+    try {
+        io.close();
+        await new Promise((resolve) => server.close(resolve));
+        if (db) await db.close();
+        console.log("✅ Clean shutdown complete.");
+        clearTimeout(forceExit);
+        process.exit(0);
+    } catch (e) {
+        console.error("💥 Error during shutdown:", e);
+        process.exit(1);
+    }
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 bootServer();

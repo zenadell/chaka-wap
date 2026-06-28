@@ -3,147 +3,138 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chaka - Supreme Overview</title>
+    <title>Chaka — Supreme Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: { sans: ['Poppins', 'sans-serif'] },
-                    colors: {
-                        base: '#0D0D0E', card: '#18181A', cardHover: '#2A2A2D',
-                        brandOrange: '#FC5A38', brandOrangeHover: '#E04A2A',
-                        textMuted: '#A1A1AA', borderMuted: '#333333'
-                    }
+            theme: { extend: {
+                fontFamily: { sans: ['Poppins', 'sans-serif'] },
+                colors: {
+                    base: '#0D0D0E', card: '#18181A', cardHover: '#2A2A2D',
+                    brandOrange: '#FC5A38', brandOrangeHover: '#E04A2A',
+                    textMuted: '#A1A1AA', borderMuted: '#333333'
                 }
-            }
+            }}
         }
     </script>
     <style>
-        body { background-color: #0D0D0E; color: #FFFFFF; }
-        ::-webkit-scrollbar { width: 4px; height: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #333333; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #4D4D4D; }
+        body { background-color: #0D0D0E; color: #fff; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+        .bar { transition: width .6s ease; }
     </style>
 </head>
-<body class="h-screen w-screen flex antialiased bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-card via-base to-base">
-    
-    <!-- Sidebar -->
-    <aside class="w-64 bg-card border-r border-borderMuted p-6 flex flex-col hidden md:flex shrink-0">
+<body class="min-h-screen w-screen flex antialiased bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-card via-base to-base">
+
+    <aside class="w-64 bg-card border-r border-borderMuted p-6 flex-col hidden md:flex shrink-0">
         <div class="flex items-center gap-3 mb-10">
             <div class="w-8 h-8 rounded-full bg-brandOrange flex items-center justify-center shrink-0 shadow-lg shadow-brandOrange/20">
                 <i class="fab fa-whatsapp text-white text-sm"></i>
             </div>
-            <h1 class="text-xl font-bold tracking-tight text-white">Supreme<span class="text-brandOrange">Admin</span></h1>
+            <h1 class="text-xl font-bold tracking-tight">Supreme<span class="text-brandOrange">Admin</span></h1>
         </div>
         <nav class="space-y-2 flex-1">
-            <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl bg-brandOrange/10 text-brandOrange font-medium transition-colors">
-                <i class="fas fa-chart-pie w-5"></i> Dashboard
-            </a>
-            <a href="/" class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-textMuted hover:text-white transition-colors">
-                <i class="fas fa-home w-5"></i> Exit to App
-            </a>
+            <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl bg-brandOrange/10 text-brandOrange font-medium"><i class="fas fa-chart-pie w-5"></i> Dashboard</a>
+            <a href="#ai-admin" class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-textMuted hover:text-white transition"><i class="fas fa-robot w-5"></i> AI Ops</a>
+            <a href="/index.html" class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-textMuted hover:text-white transition"><i class="fas fa-home w-5"></i> Exit to App</a>
         </nav>
         <div class="pt-6 border-t border-borderMuted">
-            <button onclick="logoutApp()" class="flex items-center justify-center gap-2 w-full py-2 rounded-lg text-red-400 hover:bg-red-400/10 transition-colors text-sm font-medium">
-                <i class="fas fa-sign-out-alt"></i> Terminate Session
-            </button>
+            <button onclick="logoutApp()" class="flex items-center justify-center gap-2 w-full py-2 rounded-lg text-red-400 hover:bg-red-400/10 transition text-sm font-medium"><i class="fas fa-sign-out-alt"></i> Sign out</button>
         </div>
     </aside>
 
-    <!-- Main Content -->
     <main class="flex-1 overflow-y-auto p-6 md:p-10">
-        <header class="flex justify-between items-center mb-10">
+        <header class="flex justify-between items-center mb-8">
             <div>
-                <h2 class="text-2xl font-bold">Network Analytics</h2>
-                <p class="text-textMuted text-sm mt-1">Multi-Tenant Cluster Overview</p>
+                <h2 class="text-2xl font-bold">Platform Overview</h2>
+                <p class="text-textMuted text-sm mt-1">Live multi-tenant analytics</p>
             </div>
-            <div class="bg-card px-4 py-2 border border-borderMuted rounded-full flex items-center gap-2">
-                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                <span class="text-xs font-medium tracking-widest uppercase text-textMuted">Cluster Online</span>
-            </div>
+            <button onclick="fetchAll()" class="text-xs text-brandOrange hover:text-brandOrangeHover flex items-center gap-2 font-medium bg-brandOrange/10 px-3 py-2 rounded-lg border border-brandOrange/20"><i class="fas fa-sync-alt"></i> Refresh</button>
         </header>
 
-        <!-- Stats Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-            <div class="bg-card border border-borderMuted rounded-2xl p-6 relative overflow-hidden group">
-                <div class="absolute -right-4 -top-4 w-24 h-24 bg-brandOrange/10 rounded-full blur-xl group-hover:bg-brandOrange/20 transition-colors"></div>
-                <div class="flex items-start justify-between">
-                    <div>
-                        <p class="text-xs text-textMuted uppercase font-medium tracking-wider mb-1">Tenants</p>
-                        <h3 class="text-3xl font-bold" id="stat-users">-</h3>
-                    </div>
-                    <div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-textMuted">
-                        <i class="fas fa-users"></i>
-                    </div>
-                </div>
+        <!-- Stat cards -->
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+            <div class="bg-card border border-borderMuted rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-2"><p class="text-[11px] text-textMuted uppercase tracking-wider">Total Users</p><i class="fas fa-users text-textMuted"></i></div>
+                <h3 class="text-3xl font-extrabold" id="stat-users">-</h3>
             </div>
-            <div class="bg-card border border-borderMuted rounded-2xl p-6 relative overflow-hidden group">
-                <div class="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/10 rounded-full blur-xl group-hover:bg-blue-500/20 transition-colors"></div>
-                <div class="flex items-start justify-between">
-                    <div>
-                        <p class="text-xs text-textMuted uppercase font-medium tracking-wider mb-1">Active Nodes</p>
-                        <h3 class="text-3xl font-bold" id="stat-sessions">-</h3>
-                    </div>
-                    <div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-textMuted">
-                        <i class="fas fa-network-wired"></i>
-                    </div>
-                </div>
+            <div class="bg-card border border-borderMuted rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-2"><p class="text-[11px] text-textMuted uppercase tracking-wider">Online Now</p><span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></div>
+                <h3 class="text-3xl font-extrabold text-green-400" id="stat-online">-</h3>
             </div>
-            <div class="bg-card border border-borderMuted rounded-2xl p-6 relative overflow-hidden group">
-                <div class="absolute -right-4 -top-4 w-24 h-24 bg-green-500/10 rounded-full blur-xl group-hover:bg-green-500/20 transition-colors"></div>
-                <div class="flex items-start justify-between">
-                    <div>
-                        <p class="text-xs text-textMuted uppercase font-medium tracking-wider mb-1">Inference Ops</p>
-                        <h3 class="text-3xl font-bold" id="stat-messages">-</h3>
-                    </div>
-                    <div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-textMuted">
-                        <i class="fas fa-brain"></i>
-                    </div>
-                </div>
+            <div class="bg-card border border-borderMuted rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-2"><p class="text-[11px] text-textMuted uppercase tracking-wider">Active (24h)</p><i class="fas fa-bolt text-textMuted"></i></div>
+                <h3 class="text-3xl font-extrabold" id="stat-active">-</h3>
             </div>
-            <div class="bg-card border border-borderMuted rounded-2xl p-6 relative overflow-hidden group">
-                <div class="absolute -right-4 -top-4 w-24 h-24 bg-red-500/10 rounded-full blur-xl group-hover:bg-red-500/20 transition-colors"></div>
-                <div class="flex items-start justify-between">
-                    <div>
-                        <p class="text-xs text-textMuted uppercase font-medium tracking-wider mb-1">API Drops</p>
-                        <h3 class="text-3xl font-bold text-red-400" id="stat-failures">-</h3>
-                    </div>
-                    <div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-red-500/50">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                </div>
+            <div class="bg-card border border-borderMuted rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-2"><p class="text-[11px] text-textMuted uppercase tracking-wider">New (24h)</p><i class="fas fa-user-plus text-textMuted"></i></div>
+                <h3 class="text-3xl font-extrabold" id="stat-new">-</h3>
+            </div>
+            <div class="bg-card border border-borderMuted rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-2"><p class="text-[11px] text-textMuted uppercase tracking-wider">AI Failures</p><i class="fas fa-triangle-exclamation text-red-500/60"></i></div>
+                <h3 class="text-3xl font-extrabold text-red-400" id="stat-failures">-</h3>
             </div>
         </div>
 
-        <!-- Accounts Table -->
-        <div class="bg-card border border-borderMuted rounded-2xl overflow-hidden">
-            <div class="p-6 border-b border-borderMuted flex justify-between items-center bg-white/[0.02]">
-                <h3 class="text-lg font-semibold">Registered Accounts</h3>
-                <button onclick="fetchData()" class="touch-target text-xs text-brandOrange hover:text-brandOrangeHover transition-colors flex items-center gap-2 font-medium bg-brandOrange/10 px-3 py-1.5 rounded-lg border border-brandOrange/20 hover:border-brandOrange/40">
-                    <i class="fas fa-sync-alt"></i> Refresh Sync
-                </button>
+        <!-- Breakdown row -->
+        <div class="grid lg:grid-cols-2 gap-6 mb-8">
+            <div class="bg-card border border-borderMuted rounded-2xl p-6">
+                <h3 class="font-semibold mb-4 flex items-center gap-2"><i class="fas fa-layer-group text-brandOrange"></i> Account Types</h3>
+                <div id="type-breakdown" class="space-y-3"><p class="text-textMuted text-sm">Loading…</p></div>
             </div>
+            <div class="bg-card border border-borderMuted rounded-2xl p-6">
+                <h3 class="font-semibold mb-4 flex items-center gap-2"><i class="fas fa-globe text-brandOrange"></i> Users by Location</h3>
+                <div id="geo-breakdown" class="space-y-2 max-h-64 overflow-y-auto"><p class="text-textMuted text-sm">Loading…</p></div>
+            </div>
+        </div>
+
+        <!-- AI Ops Admin -->
+        <div id="ai-admin" class="bg-card border border-borderMuted rounded-2xl p-6 mb-8">
+            <h3 class="font-semibold mb-1 flex items-center gap-2"><i class="fas fa-robot text-brandOrange"></i> AI Ops Admin</h3>
+            <p class="text-textMuted text-xs mb-4">Ask about your platform — users, activity, errors, what needs attention. Powered by DeepSeek over live data.</p>
+            <div id="ai-log" class="space-y-3 mb-4 max-h-72 overflow-y-auto text-sm"></div>
+            <div class="flex flex-wrap gap-2 mb-3" id="ai-suggestions">
+                <button class="ai-chip text-xs px-3 py-1.5 rounded-full border border-borderMuted text-textMuted hover:text-white hover:border-white/40 transition">What needs my attention today?</button>
+                <button class="ai-chip text-xs px-3 py-1.5 rounded-full border border-borderMuted text-textMuted hover:text-white hover:border-white/40 transition">How are users split by account type?</button>
+                <button class="ai-chip text-xs px-3 py-1.5 rounded-full border border-borderMuted text-textMuted hover:text-white hover:border-white/40 transition">Any AI failures I should worry about?</button>
+            </div>
+            <div class="flex gap-2">
+                <input id="ai-input" placeholder="Ask the AI admin…" class="flex-1 bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-brandOrange/60" />
+                <button id="ai-send" class="bg-brandOrange hover:bg-brandOrangeHover text-white font-semibold px-5 rounded-xl transition text-sm"><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+
+        <!-- Account security -->
+        <div class="bg-card border border-borderMuted rounded-2xl p-6 mb-8">
+            <h3 class="font-semibold mb-1 flex items-center gap-2"><i class="fas fa-key text-brandOrange"></i> Change Admin Password</h3>
+            <p class="text-textMuted text-xs mb-4">Update the password for your admin account (<span id="admin-email"></span>).</p>
+            <div id="pw-msg" class="hidden mb-3 text-sm"></div>
+            <div class="grid sm:grid-cols-3 gap-3">
+                <input id="pw-current" type="password" placeholder="Current password" class="bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm outline-none focus:border-brandOrange/60" />
+                <input id="pw-new" type="password" placeholder="New password (min 6)" class="bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm outline-none focus:border-brandOrange/60" />
+                <button id="pw-save" class="bg-brandOrange hover:bg-brandOrangeHover text-white font-semibold rounded-xl px-5 py-3 text-sm transition">Update password</button>
+            </div>
+        </div>
+
+        <!-- Accounts table -->
+        <div class="bg-card border border-borderMuted rounded-2xl overflow-hidden">
+            <div class="p-5 border-b border-borderMuted bg-white/[0.02]"><h3 class="font-semibold">Registered Accounts</h3></div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm whitespace-nowrap">
-                    <thead class="text-xs text-textMuted uppercase bg-black/20 font-medium tracking-wider border-b border-borderMuted">
+                    <thead class="text-[11px] text-textMuted uppercase bg-black/20 tracking-wider border-b border-borderMuted">
                         <tr>
-                            <th class="px-6 py-4">Tenant Identity</th>
-                            <th class="px-6 py-4">Role</th>
-                            <th class="px-6 py-4 text-center">Active Nodes</th>
-                            <th class="px-6 py-4 text-right">Last Telemetry</th>
+                            <th class="px-6 py-3">User</th>
+                            <th class="px-6 py-3">Type</th>
+                            <th class="px-6 py-3">Location</th>
+                            <th class="px-6 py-3 text-center">Nodes</th>
+                            <th class="px-6 py-3 text-center">Status</th>
+                            <th class="px-6 py-3 text-right">Last Active</th>
                         </tr>
                     </thead>
                     <tbody id="accounts-table" class="divide-y divide-borderMuted/50">
-                        <tr>
-                            <td colspan="4" class="px-6 py-8 text-center text-textMuted">
-                                <i class="fas fa-circle-notch fa-spin text-2xl mb-3 text-brandOrange"></i>
-                                <p>Decrypting records...</p>
-                            </td>
-                        </tr>
+                        <tr><td colspan="6" class="px-6 py-8 text-center text-textMuted"><i class="fas fa-circle-notch fa-spin text-xl text-brandOrange"></i></td></tr>
                     </tbody>
                 </table>
             </div>
@@ -152,107 +143,150 @@
 
     <script>
         const token = localStorage.getItem('token');
-        if (!token) {
-            window.location.href = '/login.html';
-        }
+        if (!token) window.location.href = '/login.html';
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        const authHeaders = { 'Authorization': 'Bearer ' + token };
 
-        const user = JSON.parse(localStorage.getItem('user'));
         if (!user || user.role !== 'admin') {
-            document.body.innerHTML = `
-                <div class="flex flex-col items-center justify-center h-screen w-screen bg-base text-center">
-                    <div class="w-24 h-24 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center text-4xl mb-6 shadow-[0_0_40px_rgba(239,68,68,0.2)]">
-                        <i class="fas fa-shield-alt"></i>
-                    </div>
-                    <h1 class="text-3xl font-bold mb-2">Clearance Denied</h1>
-                    <p class="text-textMuted max-w-sm mx-auto mb-8">This sector is restricted to Supreme Admin authorization protocols.</p>
-                    <a href="/" class="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-colors text-sm font-medium border border-white/10 hover:border-white/30">Return to Sector Base</a>
-                </div>
-            `;
+            document.body.innerHTML = `<div class="flex flex-col items-center justify-center h-screen w-screen text-center">
+                <div class="w-24 h-24 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center text-4xl mb-6"><i class="fas fa-shield-alt"></i></div>
+                <h1 class="text-3xl font-bold mb-2">Clearance Denied</h1>
+                <p class="text-textMuted max-w-sm mx-auto mb-8">This area is restricted to administrators.</p>
+                <a href="/index.html" class="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl text-sm font-medium border border-white/10">Return to App</a></div>`;
         }
 
-        async function fetchData() {
+        const TYPE_META = {
+            business:   { label: 'Business',   color: '#FC5A38', icon: 'fa-store' },
+            personal:   { label: 'Personal',   color: '#3B82F6', icon: 'fa-face-smile' },
+            creator:    { label: 'Creator',    color: '#A855F7', icon: 'fa-star' },
+            freelancer: { label: 'Freelancer', color: '#22C55E', icon: 'fa-briefcase' },
+            unset:      { label: 'Not set',    color: '#71717A', icon: 'fa-circle-question' }
+        };
+        const flag = (cc) => cc ? cc.toUpperCase().replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt())) : '🌐';
+        const ago = (ts) => { if(!ts) return '—'; const s=Math.floor(Date.now()/1000-ts); if(s<60)return 'just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; };
+
+        async function fetchAll() {
             try {
-                // Fetch Stats
-                const statsRes = await fetch('/api/admin/stats', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (statsRes.ok) {
-                    const stats = await statsRes.json();
-                    document.getElementById('stat-users').textContent = stats.totalUsers;
-                    document.getElementById('stat-sessions').textContent = stats.totalSessions;
-                    document.getElementById('stat-messages').textContent = stats.totalMessages;
-                    document.getElementById('stat-failures').textContent = stats.failedRequests;
-                }
+                const [statsRes, accRes] = await Promise.all([
+                    fetch('/api/admin/stats', { headers: authHeaders }),
+                    fetch('/api/admin/accounts', { headers: authHeaders })
+                ]);
+                if (statsRes.ok) renderStats(await statsRes.json());
+                if (accRes.ok) renderAccounts(await accRes.json());
+            } catch (e) { console.error('sync failed', e); }
+        }
 
-                // Fetch Accounts
-                const accountsRes = await fetch('/api/admin/accounts', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                
-                if (accountsRes.ok) {
-                    const accounts = await accountsRes.json();
-                    const tbody = document.getElementById('accounts-table');
-                    tbody.innerHTML = '';
-                    
-                    if (accounts.length === 0) {
-                        tbody.innerHTML = `<tr><td colspan="4" class="px-6 py-8 text-center text-textMuted">No tenants located in registry.</td></tr>`;
-                        return;
-                    }
+        function renderStats(s) {
+            document.getElementById('stat-users').textContent = s.totalUsers ?? 0;
+            document.getElementById('stat-online').textContent = s.onlineUsers ?? 0;
+            document.getElementById('stat-active').textContent = s.active24h ?? 0;
+            document.getElementById('stat-new').textContent = s.newToday ?? 0;
+            document.getElementById('stat-failures').textContent = s.failedRequests ?? 0;
 
-                    accounts.forEach(acc => {
-                        const dateNum = acc.last_login ? acc.last_login * 1000 : acc.created_at * 1000;
-                        const loginDate = new Date(dateNum).toLocaleString();
-                        const isOnline = (Date.now() - dateNum) < (1000 * 60 * 60 * 24); // simplistic online heuristic (< 24hr)
-                        
-                        const roleBadge = acc.role === 'admin' 
-                            ? `<span class="bg-brandOrange/20 text-brandOrange border border-brandOrange/30 text-[10px] px-2 py-1 rounded-md uppercase font-bold tracking-widest"><i class="fas fa-crown text-[8px] mr-1"></i> Admin</span>`
-                            : `<span class="bg-white/10 text-textMuted border border-white/10 text-[10px] px-2 py-1 rounded-md uppercase font-semibold tracking-widest">User</span>`;
+            // Account types
+            const total = (s.byType || []).reduce((a, t) => a + t.c, 0) || 1;
+            const tb = document.getElementById('type-breakdown');
+            tb.innerHTML = (s.byType || []).map(t => {
+                const m = TYPE_META[t.type] || TYPE_META.unset;
+                const pct = Math.round(t.c / total * 100);
+                return `<div>
+                    <div class="flex justify-between text-xs mb-1">
+                        <span class="flex items-center gap-2"><i class="fas ${m.icon}" style="color:${m.color}"></i> ${m.label}</span>
+                        <span class="text-textMuted">${t.c} · ${pct}%</span>
+                    </div>
+                    <div class="h-2 bg-black/40 rounded-full overflow-hidden"><div class="bar h-full rounded-full" style="width:${pct}%;background:${m.color}"></div></div>
+                </div>`;
+            }).join('') || '<p class="text-textMuted text-sm">No data yet.</p>';
 
-                        const tr = document.createElement('tr');
-                        tr.className = "hover:bg-white/[0.02] transition-colors";
-                        tr.innerHTML = `
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-3">
-                                    <div class="relative">
-                                        <div class="w-10 h-10 rounded-full bg-black/40 border border-borderMuted flex items-center justify-center font-bold text-white shadow-inner">
-                                            ${acc.display_name.charAt(0).toUpperCase()}
-                                        </div>
-                                        ${isOnline ? '<div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-card rounded-full z-10 box-content"></div>' : ''}
-                                    </div>
-                                    <div class="flex flex-col">
-                                        <span class="font-semibold text-white">${acc.display_name}</span>
-                                        <span class="text-xs text-textMuted">${acc.email}</span>
-                                    </div>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4">${roleBadge}</td>
-                            <td class="px-6 py-4 text-center">
-                                <div class="inline-flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-borderMuted min-w-[60px] justify-center">
-                                    <span class="font-bold text-white ${acc.session_count > 0 ? 'text-brandOrange' : ''}">${acc.session_count}</span>
-                                    <span class="text-[10px] uppercase text-textMuted tracking-wider font-medium">/ 4</span>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-right">
-                                <div class="flex justify-end pr-2">
-                                    <span class="text-xs text-textMuted font-mono bg-black/20 px-2 py-1.5 rounded-md border border-borderMuted/50">${loginDate}</span>
-                                </div>
-                            </td>
-                        `;
-                        tbody.appendChild(tr);
-                    });
-                }
-            } catch(e) {
-                console.error("Dashboard sync failed", e);
+            // Geo
+            const gb = document.getElementById('geo-breakdown');
+            const geo = (s.byCountry || []);
+            const gtotal = geo.reduce((a, c) => a + c.c, 0) || 1;
+            gb.innerHTML = geo.map(c => {
+                const pct = Math.round(c.c / gtotal * 100);
+                return `<div class="flex items-center justify-between text-sm">
+                    <span class="flex items-center gap-2"><span class="text-lg leading-none">${flag(c.country_code)}</span> ${c.country}</span>
+                    <span class="text-textMuted text-xs">${c.c} · ${pct}%</span>
+                </div>`;
+            }).join('') || '<p class="text-textMuted text-sm">No location data yet.</p>';
+        }
+
+        function renderAccounts(accounts) {
+            const tbody = document.getElementById('accounts-table');
+            if (!accounts.length) { tbody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-textMuted">No users yet.</td></tr>`; return; }
+            tbody.innerHTML = accounts.map(acc => {
+                const m = TYPE_META[acc.account_type] || TYPE_META.unset;
+                const loc = acc.country ? `${flag(acc.country_code)} ${acc.city ? acc.city + ', ' : ''}${acc.country}` : '<span class="text-textMuted">—</span>';
+                const lastTs = acc.last_active || acc.last_login || acc.created_at;
+                return `<tr class="hover:bg-white/[0.02] transition">
+                    <td class="px-6 py-3">
+                        <div class="flex items-center gap-3">
+                            <div class="relative">
+                                <div class="w-9 h-9 rounded-full bg-black/40 border border-borderMuted flex items-center justify-center font-bold">${(acc.display_name||'?').charAt(0).toUpperCase()}</div>
+                                ${acc.online ? '<div class="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-card rounded-full"></div>' : ''}
+                            </div>
+                            <div class="flex flex-col">
+                                <span class="font-semibold flex items-center gap-1.5">${acc.display_name||'—'} ${acc.role==='admin'?'<i class="fas fa-crown text-brandOrange text-[10px]"></i>':''}</span>
+                                <span class="text-xs text-textMuted">${acc.email}</span>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-3"><span class="text-xs px-2 py-1 rounded-md font-medium" style="background:${m.color}1a;color:${m.color}"><i class="fas ${m.icon} mr-1 text-[10px]"></i>${m.label}</span></td>
+                    <td class="px-6 py-3 text-sm">${loc}</td>
+                    <td class="px-6 py-3 text-center"><span class="${acc.session_count>0?'text-brandOrange font-bold':'text-textMuted'}">${acc.session_count}</span></td>
+                    <td class="px-6 py-3 text-center">${acc.online?'<span class="text-green-400 text-xs"><i class="fas fa-circle text-[8px]"></i> Online</span>':'<span class="text-textMuted text-xs">Offline</span>'}</td>
+                    <td class="px-6 py-3 text-right text-xs text-textMuted">${ago(lastTs)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // --- AI Ops Admin ---
+        const aiLog = document.getElementById('ai-log');
+        function addMsg(who, text) {
+            const wrap = document.createElement('div');
+            if (who === 'user') {
+                wrap.className = 'flex justify-end';
+                wrap.innerHTML = `<div class="bg-brandOrange text-white rounded-2xl rounded-tr-sm px-4 py-2 max-w-[85%]">${text}</div>`;
+            } else {
+                wrap.className = 'flex justify-start';
+                wrap.innerHTML = `<div class="bg-base border border-borderMuted rounded-2xl rounded-tl-sm px-4 py-2 max-w-[90%] whitespace-pre-wrap">${text}</div>`;
             }
+            aiLog.appendChild(wrap); aiLog.scrollTop = aiLog.scrollHeight;
+            return wrap;
         }
-
-        function logoutApp() {
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            window.location.href = '/login.html';
+        async function askAI(q) {
+            if (!q.trim()) return;
+            addMsg('user', q);
+            document.getElementById('ai-input').value = '';
+            const thinking = addMsg('ai', '…');
+            try {
+                const res = await fetch('/api/admin/ai', { method:'POST', headers:{...authHeaders,'Content-Type':'application/json'}, body: JSON.stringify({ question: q }) });
+                const data = await res.json();
+                thinking.querySelector('div').textContent = data.answer || data.error || 'No response.';
+            } catch (e) { thinking.querySelector('div').textContent = 'Network error.'; }
+            aiLog.scrollTop = aiLog.scrollHeight;
         }
+        document.getElementById('ai-send').onclick = () => askAI(document.getElementById('ai-input').value);
+        document.getElementById('ai-input').addEventListener('keydown', e => { if (e.key === 'Enter') askAI(e.target.value); });
+        document.querySelectorAll('.ai-chip').forEach(c => c.onclick = () => askAI(c.textContent));
 
-        if(user && user.role === 'admin') fetchData();
+        // --- Change password ---
+        document.getElementById('admin-email').textContent = user.email || '';
+        document.getElementById('pw-save').onclick = async () => {
+            const cur = document.getElementById('pw-current').value;
+            const nw = document.getElementById('pw-new').value;
+            const msg = document.getElementById('pw-msg');
+            msg.classList.remove('hidden');
+            if (!nw || nw.length < 6) { msg.className = 'mb-3 text-sm text-red-400'; msg.textContent = 'New password must be at least 6 characters.'; return; }
+            const res = await fetch('/api/account/password', { method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword: cur, newPassword: nw }) });
+            const data = await res.json();
+            if (res.ok) { msg.className = 'mb-3 text-sm text-green-400'; msg.textContent = '✅ Password updated.'; document.getElementById('pw-current').value=''; document.getElementById('pw-new').value=''; }
+            else { msg.className = 'mb-3 text-sm text-red-400'; msg.textContent = data.error || 'Failed to update.'; }
+        };
+
+        function logoutApp() { localStorage.removeItem('token'); localStorage.removeItem('user'); window.location.href = '/login.html'; }
+
+        if (user && user.role === 'admin') { fetchAll(); setInterval(fetchAll, 30000); }
     </script>
 </body>
 </html>

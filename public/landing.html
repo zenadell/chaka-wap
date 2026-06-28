@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chaka — Your WhatsApp, on autopilot</title>
+    <meta name="description" content="Chaka is an AI assistant that replies to your WhatsApp messages 24/7 — in your voice. For businesses, creators, freelancers, and personal chats.">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Poppins', 'sans-serif'] },
+                    colors: {
+                        base: '#18181A', card: '#222224', cardHover: '#2A2A2D',
+                        brandOrange: '#FC5A38', brandOrangeHover: '#E04A2A',
+                        textMuted: '#A1A1AA', borderMuted: '#333333',
+                        waGreen: '#25D366'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        html { scroll-behavior: smooth; }
+        body { background-color: #18181A; color: #fff; }
+        .glow { background: radial-gradient(600px circle at 50% 0%, rgba(252,90,56,0.18), transparent 70%); }
+        .fade-up { opacity: 0; transform: translateY(20px); animation: fadeUp .7s ease forwards; }
+        @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+        .chat-bubble-in { background:#222224; border:1px solid #333; }
+        .chat-bubble-out { background:#FC5A38; }
+        .nav-blur { background: rgba(24,24,26,0.7); backdrop-filter: blur(12px); }
+        .feat:hover { border-color: rgba(252,90,56,0.5); transform: translateY(-3px); }
+        .feat { transition: all .25s ease; }
+        @keyframes typing { 0%,60%,100%{opacity:.3} 30%{opacity:1} }
+        .dot { animation: typing 1.4s infinite; }
+        .dot:nth-child(2){ animation-delay:.2s } .dot:nth-child(3){ animation-delay:.4s }
+    </style>
+</head>
+<body class="font-sans antialiased overflow-x-hidden">
+
+    <!-- NAV -->
+    <nav class="fixed top-0 inset-x-0 z-50 nav-blur border-b border-borderMuted/40">
+        <div class="max-w-6xl mx-auto px-5 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2.5">
+                <div class="w-9 h-9 bg-brandOrange/15 text-brandOrange rounded-xl flex items-center justify-center border border-brandOrange/20">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <span class="font-bold text-lg tracking-tight">Chaka</span>
+            </a>
+            <div class="hidden md:flex items-center gap-8 text-sm text-textMuted">
+                <a href="#features" class="hover:text-white transition">Features</a>
+                <a href="#how" class="hover:text-white transition">How it works</a>
+                <a href="#who" class="hover:text-white transition">Who it's for</a>
+            </div>
+            <div class="flex items-center gap-3">
+                <a href="/login.html" class="text-sm font-medium text-textMuted hover:text-white transition px-3 py-2">Sign in</a>
+                <a href="/login.html?signup=1" class="text-sm font-semibold bg-brandOrange hover:bg-brandOrangeHover text-white px-4 py-2.5 rounded-full transition">Get started</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- HERO -->
+    <header class="relative pt-32 pb-20 glow">
+        <div class="max-w-6xl mx-auto px-5 grid lg:grid-cols-2 gap-12 items-center">
+            <div class="fade-up">
+                <div class="inline-flex items-center gap-2 bg-card border border-borderMuted/60 rounded-full px-3.5 py-1.5 text-xs text-textMuted mb-6">
+                    <span class="w-2 h-2 rounded-full bg-waGreen animate-pulse"></span>
+                    AI replies, 24/7 — even while you sleep
+                </div>
+                <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.05] tracking-tight">
+                    Your WhatsApp,<br><span class="text-brandOrange">on autopilot.</span>
+                </h1>
+                <p class="text-textMuted text-lg mt-6 max-w-md leading-relaxed">
+                    Chaka answers your messages in your voice — handling customers, fans, clients and friends so you never leave anyone on read.
+                </p>
+                <div class="flex flex-wrap items-center gap-3 mt-8">
+                    <a href="/login.html?signup=1" class="bg-brandOrange hover:bg-brandOrangeHover text-white font-semibold px-7 py-3.5 rounded-full transition flex items-center gap-2 shadow-lg shadow-brandOrange/20">
+                        Get started free <i class="fas fa-arrow-right text-sm"></i>
+                    </a>
+                    <a href="#how" class="border border-borderMuted hover:border-white/40 text-white font-semibold px-7 py-3.5 rounded-full transition">
+                        See how it works
+                    </a>
+                </div>
+                <div class="flex items-center gap-6 mt-9 text-xs text-textMuted">
+                    <span class="flex items-center gap-2"><i class="fas fa-check text-waGreen"></i> Set up in minutes</span>
+                    <span class="flex items-center gap-2"><i class="fas fa-check text-waGreen"></i> No API keys needed</span>
+                    <span class="flex items-center gap-2"><i class="fas fa-check text-waGreen"></i> Replies in your style</span>
+                </div>
+            </div>
+
+            <!-- Chat mockup -->
+            <div class="fade-up" style="animation-delay:.15s">
+                <div class="relative mx-auto max-w-sm">
+                    <div class="absolute -inset-4 bg-brandOrange/10 blur-3xl rounded-full"></div>
+                    <div class="relative bg-card border border-borderMuted/70 rounded-[28px] p-4 shadow-2xl">
+                        <div class="flex items-center gap-3 pb-3 border-b border-borderMuted/50">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-brandOrange to-yellow-500 flex items-center justify-center font-bold text-sm">JD</div>
+                            <div>
+                                <div class="text-sm font-semibold">Jane (Customer)</div>
+                                <div class="text-[11px] text-waGreen flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-waGreen"></span> Chaka is replying…</div>
+                            </div>
+                        </div>
+                        <div class="space-y-3 py-4 text-sm">
+                            <div class="chat-bubble-in rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[80%]">Hi! Are you open this Sunday? 😊</div>
+                            <div class="chat-bubble-out rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[85%] ml-auto text-white">Hey Jane! Yes — we're open Sunday 10am–4pm. Want me to reserve a table? 🎉</div>
+                            <div class="chat-bubble-in rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[80%]">Perfect, table for 2 at noon please</div>
+                            <div class="chat-bubble-out rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[85%] ml-auto text-white">Done ✅ Table for 2, Sunday 12pm. See you then!</div>
+                            <div class="flex items-center gap-1 pl-2">
+                                <span class="dot w-1.5 h-1.5 bg-textMuted rounded-full"></span>
+                                <span class="dot w-1.5 h-1.5 bg-textMuted rounded-full"></span>
+                                <span class="dot w-1.5 h-1.5 bg-textMuted rounded-full"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- TRUST STRIP -->
+    <section class="border-y border-borderMuted/40 py-8">
+        <div class="max-w-5xl mx-auto px-5 grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+            <div><div class="text-2xl font-extrabold text-brandOrange">24/7</div><div class="text-xs text-textMuted mt-1">Always replying</div></div>
+            <div><div class="text-2xl font-extrabold text-brandOrange">&lt; 2s</div><div class="text-xs text-textMuted mt-1">Avg. response</div></div>
+            <div><div class="text-2xl font-extrabold text-brandOrange">Multi</div><div class="text-xs text-textMuted mt-1">WhatsApp accounts</div></div>
+            <div><div class="text-2xl font-extrabold text-brandOrange">Text · 📷 · 🎙️</div><div class="text-xs text-textMuted mt-1">Understands it all</div></div>
+        </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section id="features" class="py-24">
+        <div class="max-w-6xl mx-auto px-5">
+            <div class="text-center max-w-2xl mx-auto mb-14">
+                <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Everything you need to never miss a message</h2>
+                <p class="text-textMuted mt-4">Chaka plugs into your WhatsApp and handles conversations like you would — only it never sleeps.</p>
+            </div>
+            <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-bolt"></i></div>
+                    <h3 class="font-semibold mb-2">Instant auto-replies</h3>
+                    <p class="text-sm text-textMuted">Every message gets a thoughtful reply in seconds, around the clock.</p>
+                </div>
+                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-wand-magic-sparkles"></i></div>
+                    <h3 class="font-semibold mb-2">Sounds just like you</h3>
+                    <p class="text-sm text-textMuted">Tell Chaka your goals and tone — it replies in your voice, not a robot's.</p>
+                </div>
+                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-image"></i></div>
+                    <h3 class="font-semibold mb-2">Sees images & hears voice notes</h3>
+                    <p class="text-sm text-textMuted">Understands photos and transcribes voice notes, then responds in context.</p>
+                </div>
+                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-layer-group"></i></div>
+                    <h3 class="font-semibold mb-2">Multiple accounts</h3>
+                    <p class="text-sm text-textMuted">Run several WhatsApp numbers from one dashboard — business and personal.</p>
+                </div>
+                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-clock"></i></div>
+                    <h3 class="font-semibold mb-2">Scheduled messages</h3>
+                    <p class="text-sm text-textMuted">Queue follow-ups and reminders that send automatically at the right time.</p>
+                </div>
+                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-sliders"></i></div>
+                    <h3 class="font-semibold mb-2">You're always in control</h3>
+                    <p class="text-sm text-textMuted">Toggle auto-reply per contact, switch to draft mode, or take over anytime.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section id="how" class="py-24 bg-card/30 border-y border-borderMuted/40">
+        <div class="max-w-5xl mx-auto px-5">
+            <div class="text-center mb-14">
+                <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Live in 3 simple steps</h2>
+                <p class="text-textMuted mt-4">No code, no API keys — just connect and go.</p>
+            </div>
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="text-center">
+                    <div class="w-14 h-14 mx-auto rounded-2xl bg-brandOrange text-white flex items-center justify-center text-xl font-bold mb-5">1</div>
+                    <h3 class="font-semibold mb-2">Create your account</h3>
+                    <p class="text-sm text-textMuted">Sign up in seconds and tell us how you'll use Chaka.</p>
+                </div>
+                <div class="text-center">
+                    <div class="w-14 h-14 mx-auto rounded-2xl bg-brandOrange text-white flex items-center justify-center text-xl font-bold mb-5">2</div>
+                    <h3 class="font-semibold mb-2">Scan the QR code</h3>
+                    <p class="text-sm text-textMuted">Link your WhatsApp by scanning a QR — just like WhatsApp Web.</p>
+                </div>
+                <div class="text-center">
+                    <div class="w-14 h-14 mx-auto rounded-2xl bg-brandOrange text-white flex items-center justify-center text-xl font-bold mb-5">3</div>
+                    <h3 class="font-semibold mb-2">Let Chaka reply</h3>
+                    <p class="text-sm text-textMuted">Sit back — your assistant handles conversations in your style.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- WHO IT'S FOR -->
+    <section id="who" class="py-24">
+        <div class="max-w-6xl mx-auto px-5">
+            <div class="text-center max-w-2xl mx-auto mb-14">
+                <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Built for the way you chat</h2>
+                <p class="text-textMuted mt-4">Pick your style at signup and Chaka configures itself to your goals.</p>
+            </div>
+            <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                <div class="bg-card border border-borderMuted/60 rounded-2xl p-6 hover:border-brandOrange/50 transition">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-store"></i></div>
+                    <h3 class="font-semibold mb-2">Business owners</h3>
+                    <p class="text-sm text-textMuted">Answer customers, quote prices and take bookings — automatically.</p>
+                </div>
+                <div class="bg-card border border-borderMuted/60 rounded-2xl p-6 hover:border-brandOrange/50 transition">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-star"></i></div>
+                    <h3 class="font-semibold mb-2">Creators</h3>
+                    <p class="text-sm text-textMuted">Keep fans engaged and never miss a DM, even at scale.</p>
+                </div>
+                <div class="bg-card border border-borderMuted/60 rounded-2xl p-6 hover:border-brandOrange/50 transition">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-briefcase"></i></div>
+                    <h3 class="font-semibold mb-2">Freelancers</h3>
+                    <p class="text-sm text-textMuted">Handle client questions, scheduling and follow-ups effortlessly.</p>
+                </div>
+                <div class="bg-card border border-borderMuted/60 rounded-2xl p-6 hover:border-brandOrange/50 transition">
+                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-face-smile"></i></div>
+                    <h3 class="font-semibold mb-2">Personal & fun</h3>
+                    <p class="text-sm text-textMuted">Casual replies to friends in your own voice when you're busy.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="py-24">
+        <div class="max-w-4xl mx-auto px-5">
+            <div class="relative overflow-hidden rounded-[32px] border border-brandOrange/20 bg-gradient-to-br from-brandOrange/15 via-card to-card p-10 sm:p-14 text-center">
+                <div class="absolute -top-20 -right-20 w-60 h-60 bg-brandOrange/20 blur-3xl rounded-full"></div>
+                <h2 class="relative text-3xl sm:text-4xl font-extrabold tracking-tight">Ready to put your chats on autopilot?</h2>
+                <p class="relative text-textMuted mt-4 max-w-lg mx-auto">Join the people letting Chaka handle their WhatsApp — so they can focus on everything else.</p>
+                <a href="/login.html?signup=1" class="relative inline-flex items-center gap-2 mt-8 bg-brandOrange hover:bg-brandOrangeHover text-white font-semibold px-8 py-4 rounded-full transition shadow-lg shadow-brandOrange/20">
+                    Get started free <i class="fas fa-arrow-right text-sm"></i>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="border-t border-borderMuted/40 py-10">
+        <div class="max-w-6xl mx-auto px-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 bg-brandOrange/15 text-brandOrange rounded-lg flex items-center justify-center border border-brandOrange/20 text-sm"><i class="fas fa-robot"></i></div>
+                <span class="font-bold">Chaka</span>
+            </div>
+            <p class="text-xs text-textMuted">© <span id="year"></span> Chaka. Your WhatsApp, on autopilot.</p>
+            <div class="flex items-center gap-5 text-sm">
+                <a href="/login.html" class="text-textMuted hover:text-white transition">Sign in</a>
+                <a href="/login.html?signup=1" class="text-brandOrange hover:text-brandOrangeHover font-medium transition">Get started</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        document.getElementById('year').textContent = new Date().getFullYear();
+        // If already signed in, send returning users straight to the dashboard.
+        if (localStorage.getItem('token')) {
+            const nav = document.querySelector('nav .flex.items-center.gap-3');
+            if (nav) nav.innerHTML = '<a href="/index.html" class="text-sm font-semibold bg-brandOrange hover:bg-brandOrangeHover text-white px-4 py-2.5 rounded-full transition">Open dashboard</a>';
+        }
+    </script>
+</body>
+</html>

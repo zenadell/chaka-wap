@@ -1,6 +1,26 @@
+# Dependencies
 node_modules/
 venv_qwen/
-*.db
+
+# Secrets & environment
 .env
+.env.*
+!.env.example
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# WhatsApp / Baileys session state (NEVER commit — these are live credentials)
 auth_baileys_*
+.wwebjs_auth/
+.wwebjs_cache/
+data/
+
+# Logs
+*.log
+server_log.txt
+
+# OS
 .DS_Store

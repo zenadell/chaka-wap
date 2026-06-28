@@ -5,15 +5,25 @@ primary_region = "lhr"
 [http_service]
   internal_port = 3000
   force_https = true
-  auto_stop_machines = true
+  # A WhatsApp bot must stay connected to receive messages and run the cron
+  # scheduler. Keep at least one machine alive and do NOT auto-stop on idle.
+  auto_stop_machines = false
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
 
 [[mounts]]
   source = "chaka_data"
   destination = "/app/data"
 
 [env]
+  NODE_ENV = "production"
   PORT = "3000"
   ACTIVE_API = "openrouter"

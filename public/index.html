@@ -234,16 +234,16 @@
 
         <div class="mt-4 bg-brandOrange rounded-[24px] p-5 sm:p-6 text-base relative overflow-hidden shrink-0">
             <div class="relative z-10 flex flex-col items-start gap-3">
-                <h3 class="font-bold text-white text-lg leading-tight">Add Node<br>or API Key</h3>
+                <h3 class="font-bold text-white text-lg leading-tight">Add<br>Node</h3>
                 <div class="flex gap-2 w-full">
                     <button onclick="createNewSession()"
                         class="flex-1 touch-target bg-black/20 hover:bg-black/40 text-white rounded-full py-3 transition-colors flex items-center justify-center">
                         <i class="fas fa-plus text-sm"></i>
                     </button>
-                    <button onclick="manageApiKeys()"
+                    <a href="/vibe.html"
                         class="flex-1 touch-target bg-black/20 hover:bg-black/40 text-white rounded-full py-3 transition-colors flex items-center justify-center">
-                        <i class="fas fa-key text-sm"></i>
-                    </button>
+                        <i class="fas fa-chart-line text-sm"></i>
+                    </a>
                 </div>
             </div>
             <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none">
@@ -335,40 +335,65 @@
 
                     <div
                         class="w-full sm:w-[320px] xl:w-[360px] max-w-full flex flex-col gap-4 shrink-0 bg-black/10 p-5 rounded-[28px] border border-white/5 mx-auto xl:mx-0">
-                        <div class="bg-white/5 rounded-[20px] p-1.5 flex gap-1 flex-wrap">
-                            <button id="engine-gemini" onclick="switchEngine('gemini')"
-                                class="flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]">Gemini
-                                Pro</button>
-                            <button id="engine-chaka" onclick="switchEngine('chaka')"
-                                class="flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]">V5
-                                Engine</button>
-                            <button id="engine-openrouter" onclick="switchEngine('openrouter')"
-                                class="flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]">Qwen
-                                Cloud</button>
-                            <button id="engine-qwen" onclick="switchEngine('qwen')"
-                                class="flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]">Qwen
-                                Local</button>
+                        <div class="bg-white/5 rounded-[20px] p-4 text-center">
+                            <div class="text-xs font-bold text-white/80 flex items-center justify-center gap-2">
+                                <i class="fas fa-bolt text-brandOrange"></i> Powered by Chaka AI
+                            </div>
+                            <div class="text-[11px] text-white/40 mt-1">Engine managed automatically</div>
                         </div>
-
-                        <div id="chaka-options" class="hidden animate-fade-in">
-                            <select id="chaka-model-select"
-                                class="w-full bg-base border border-borderMuted rounded-[18px] p-3.5 text-xs text-white font-bold cursor-pointer outline-none focus:border-brandOrange/60 transition-all appearance-none">
-                                <option value="chaka-low">Chaka Velocity</option>
-                                <option value="chaka-medium">Chaka Core</option>
-                                <option value="chaka-high">Chaka Reasoning</option>
-                                <option value="chaka-ultimate">Chaka Ultra</option>
-                            </select>
-                        </div>
-
-                        <button onclick="saveAiConfig()"
-                            class="w-full bg-card hover:bg-cardHover border border-borderMuted text-white font-bold rounded-[18px] py-4 transition-all text-xs shadow-sm hover:scale-[1.02] active:scale-95">
-                            Deploy AI Config
-                        </button>
 
                         <button onclick="triggerSelfTrain()"
                             class="w-full bg-brandOrange/10 hover:bg-brandOrange/20 border border-brandOrange/30 text-brandOrange font-bold rounded-[18px] py-4 transition-all text-xs flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95">
                             <i class="fas fa-brain"></i> Index Node History
                         </button>
+                    </div>
+                </div>
+
+                <!-- Business Knowledge (business accounts only) -->
+                <div id="business-kb" class="hidden bg-card rounded-[28px] md:rounded-[36px] p-6 md:p-8 mb-8 border border-borderMuted/40 shadow-xl">
+                    <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+                        <h3 class="text-lg md:text-xl font-bold flex items-center gap-2"><i class="fas fa-book text-brandOrange"></i> Business Knowledge</h3>
+                        <span class="text-[11px] text-textMuted">The AI answers customers using only what you add here</span>
+                    </div>
+                    <p class="text-textMuted text-xs mb-5">Add your products, prices, business info and FAQs. Anything not listed, the AI offers to check with you instead of guessing.</p>
+                    <div class="grid lg:grid-cols-2 gap-6">
+                        <div class="bg-black/20 rounded-2xl p-5 border border-borderMuted/30">
+                            <div class="flex gap-2 mb-4" id="kb-type-tabs">
+                                <button data-kind="product" class="kb-tab flex-1 py-2 rounded-lg text-xs font-bold bg-brandOrange text-white">Product / Service</button>
+                                <button data-kind="info" class="kb-tab flex-1 py-2 rounded-lg text-xs font-bold bg-white/5 text-textMuted">Business Info</button>
+                                <button data-kind="faq" class="kb-tab flex-1 py-2 rounded-lg text-xs font-bold bg-white/5 text-textMuted">FAQ</button>
+                            </div>
+                            <div class="space-y-3">
+                                <input id="kb-name" placeholder="Product / service name" class="w-full bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm outline-none focus:border-brandOrange/60" />
+                                <input id="kb-price" placeholder="Price (e.g. ₦5000 or $25)" class="w-full bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm outline-none focus:border-brandOrange/60" />
+                                <textarea id="kb-detail" rows="2" placeholder="Short description (optional)" class="w-full bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm outline-none resize-none focus:border-brandOrange/60"></textarea>
+                                <button onclick="addKbItem()" class="w-full bg-brandOrange hover:bg-brandOrangeHover text-white font-bold rounded-xl py-3 text-sm transition"><i class="fas fa-plus mr-1"></i> Add to knowledge</button>
+                            </div>
+
+                            <!-- Bulk import (for big catalogs) -->
+                            <div class="mt-5 pt-5 border-t border-borderMuted/40">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-bold text-white/80">Have lots of products?</span>
+                                    <button onclick="document.getElementById('kb-bulk-area').classList.toggle('hidden')" class="text-[11px] text-brandOrange hover:text-brandOrangeHover">Bulk import ▾</button>
+                                </div>
+                                <div id="kb-bulk-area" class="hidden space-y-3">
+                                    <!-- Photo / PDF import -->
+                                    <label class="block">
+                                        <span class="text-[11px] text-textMuted">📷 Snap a menu / price list (photo or PDF) — AI fills it in</span>
+                                        <input type="file" id="kb-file" accept="image/*,.pdf" onchange="importKbFile()" class="mt-1 block w-full text-xs text-textMuted file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-brandOrange/20 file:text-brandOrange file:text-xs file:font-bold hover:file:bg-brandOrange/30 cursor-pointer" />
+                                    </label>
+                                    <!-- Paste / CSV import -->
+                                    <div>
+                                        <span class="text-[11px] text-textMuted">📋 Or paste a list — one per line: <span class="text-white/70">Name, Price, Description</span> (works straight from Excel)</span>
+                                        <textarea id="kb-bulk-text" rows="4" placeholder="Sneakers, ₦15000, premium leather&#10;Cap, ₦4000, one size&#10;..." class="mt-1 w-full bg-base border border-borderMuted rounded-xl px-3 py-2 text-xs outline-none resize-none focus:border-brandOrange/60 font-mono"></textarea>
+                                        <button onclick="importKbBulk()" class="mt-2 w-full bg-white/5 hover:bg-white/10 border border-borderMuted text-white font-bold rounded-xl py-2.5 text-xs transition"><i class="fas fa-file-import mr-1"></i> Import list</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-black/20 rounded-2xl p-5 border border-borderMuted/30 max-h-80 overflow-y-auto">
+                            <div id="kb-list" class="space-y-2"><p class="text-textMuted text-sm text-center py-8">No items yet — add your first product or info.</p></div>
+                        </div>
                     </div>
                 </div>
 
@@ -604,6 +629,99 @@
             window.location.href = '/login.html';
         }
 
+        // Onboarding guard: new users must pick an account type so the AI is
+        // configured to their goals before they reach the dashboard.
+        fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } })
+            .then(r => r.ok ? r.json() : null)
+            .then(u => {
+                if (u && !u.onboarded) { window.location.href = '/onboarding.html'; return; }
+                // Business Knowledge is for business accounts only.
+                if (u && u.account_type === 'business') {
+                    document.getElementById('business-kb')?.classList.remove('hidden');
+                    loadKb();
+                }
+            })
+            .catch(() => {});
+
+        // --- BUSINESS KNOWLEDGE BASE ---
+        let kbKind = 'product';
+        const kbPlaceholders = {
+            product: { name: 'Product / service name', detail: 'Short description (optional)', price: true },
+            info:    { name: 'Label (e.g. Opening hours, Location, Delivery)', detail: 'Value (e.g. Mon–Sat 9am–6pm)', price: false },
+            faq:     { name: 'Question (e.g. Do you deliver?)', detail: 'Answer', price: false }
+        };
+        document.querySelectorAll('.kb-tab').forEach(tab => {
+            tab.onclick = () => {
+                kbKind = tab.dataset.kind;
+                document.querySelectorAll('.kb-tab').forEach(t => { t.className = t.className.replace('bg-brandOrange text-white', 'bg-white/5 text-textMuted'); });
+                tab.className = tab.className.replace('bg-white/5 text-textMuted', 'bg-brandOrange text-white');
+                const ph = kbPlaceholders[kbKind];
+                document.getElementById('kb-name').placeholder = ph.name;
+                document.getElementById('kb-detail').placeholder = ph.detail;
+                document.getElementById('kb-price').style.display = ph.price ? '' : 'none';
+            };
+        });
+
+        async function loadKb() {
+            try {
+                const res = await fetch('/api/knowledge', { headers: { 'Authorization': 'Bearer ' + token } });
+                if (!res.ok) return;
+                const items = await res.json();
+                const list = document.getElementById('kb-list');
+                if (!items.length) { list.innerHTML = '<p class="text-textMuted text-sm text-center py-8">No items yet — add your first product or info.</p>'; return; }
+                const KIND_LABEL = { product: 'Product/Service', service: 'Product/Service', info: 'Business Info', faq: 'FAQ' };
+                list.innerHTML = items.map(i => `
+                    <div class="flex items-start justify-between gap-3 bg-base/60 border border-borderMuted/40 rounded-xl px-3 py-2.5">
+                        <div class="min-w-0">
+                            <div class="text-[10px] uppercase tracking-wider text-brandOrange/80 font-semibold">${KIND_LABEL[i.kind] || i.kind}</div>
+                            <div class="text-sm font-medium truncate">${i.name}${i.price ? ` <span class="text-brandOrange">· ${i.price}</span>` : ''}</div>
+                            ${i.detail ? `<div class="text-xs text-textMuted line-clamp-2">${i.detail}</div>` : ''}
+                        </div>
+                        <button onclick="deleteKbItem(${i.id})" class="text-textMuted hover:text-red-400 transition shrink-0"><i class="fas fa-trash text-xs"></i></button>
+                    </div>`).join('');
+            } catch (e) {}
+        }
+        async function addKbItem() {
+            const name = document.getElementById('kb-name').value.trim();
+            if (!name) { showToast('Add a name first'); return; }
+            const body = { kind: kbKind, name, detail: document.getElementById('kb-detail').value, price: kbKind === 'product' ? document.getElementById('kb-price').value : '' };
+            const res = await fetch('/api/knowledge', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (res.ok) {
+                document.getElementById('kb-name').value = ''; document.getElementById('kb-detail').value = ''; document.getElementById('kb-price').value = '';
+                showToast('Added to knowledge'); loadKb();
+            } else { showToast('Failed to add'); }
+        }
+        async function deleteKbItem(id) {
+            const res = await fetch('/api/knowledge/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+            if (res.ok) loadKb();
+        }
+        async function importKbBulk() {
+            const text = document.getElementById('kb-bulk-text').value;
+            if (!text.trim()) { showToast('Paste a list first'); return; }
+            const res = await fetch('/api/knowledge/bulk', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ text, kind: 'product' }) });
+            const data = await res.json();
+            if (res.ok) { document.getElementById('kb-bulk-text').value = ''; showToast(`Imported ${data.added} items`); loadKb(); }
+            else { showToast(data.error || 'Import failed'); }
+        }
+        async function importKbFile() {
+            const input = document.getElementById('kb-file');
+            const file = input.files[0];
+            if (!file) return;
+            showToast('Reading file with AI…');
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const dataBase64 = reader.result.split(',')[1];
+                try {
+                    const res = await fetch('/api/knowledge/import-file', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ dataBase64, mimeType: file.type }) });
+                    const data = await res.json();
+                    if (res.ok) { showToast(`AI added ${data.added} products`); loadKb(); }
+                    else { showToast(data.error || 'Import failed'); }
+                } catch (e) { showToast('Import failed'); }
+                input.value = '';
+            };
+            reader.readAsDataURL(file);
+        }
+
         const socket = io({
             auth: { token }
         });
@@ -788,12 +906,7 @@
             if (data.sessionId !== activeSessionId) return;
             globalPrompt.value = data.config.globalPrompt || '';
             masterToggle.checked = !!data.config.masterAutoReply;
-
-            const engine = data.config.aiEngine || 'gemini';
-            switchEngine(engine, false);
-            if (engine === 'chaka' && data.config.chakaModel) {
-                document.getElementById('chaka-model-select').value = data.config.chakaModel;
-            }
+            // AI engine is managed centrally (DeepSeek) — no user-facing engine selection.
         });
 
         socket.on('contact_list', (data) => {
@@ -893,53 +1006,8 @@
             showToast('Entity Updated');
         }
 
-        function switchEngine(engine, emit = true) {
-            const geminiBtn = document.getElementById('engine-gemini');
-            const chakaBtn = document.getElementById('engine-chaka');
-            const openRouterBtn = document.getElementById('engine-openrouter');
-            const qwenBtn = document.getElementById('engine-qwen');
-            const chakaOptions = document.getElementById('chaka-options');
-
-            // Reset all
-            geminiBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]";
-            chakaBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]";
-            if (openRouterBtn) openRouterBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]";
-            if (qwenBtn) qwenBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold text-white/70 hover:text-white transition-all min-w-[30%]";
-
-            if (engine === 'gemini') {
-                geminiBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]";
-                chakaOptions.classList.add('hidden');
-            } else if (engine === 'chaka') {
-                chakaBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]";
-                chakaOptions.classList.remove('hidden');
-            } else if (engine === 'openrouter') {
-                if (openRouterBtn) openRouterBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]";
-                chakaOptions.classList.add('hidden');
-            } else if (engine === 'qwen') {
-                if (qwenBtn) qwenBtn.className = "flex-1 py-3 rounded-[15px] text-xs font-bold bg-white text-black shadow-sm transition-all min-w-[30%]";
-                chakaOptions.classList.add('hidden');
-            }
-
-            if (emit && activeSessionId) {
-                socket.emit('update_config', { sessionId: activeSessionId, updates: { aiEngine: engine } });
-            }
-        }
-
-        function saveAiConfig() {
-            if (!activeSessionId) return;
-            
-            let engine = 'gemini';
-            if (document.getElementById('engine-chaka').classList.contains('bg-white')) engine = 'chaka';
-            if (document.getElementById('engine-openrouter').classList.contains('bg-white')) engine = 'openrouter';
-            if (document.getElementById('engine-qwen').classList.contains('bg-white')) engine = 'qwen';
-            
-            const updates = { aiEngine: engine };
-            if (engine === 'chaka') {
-                updates.chakaModel = document.getElementById('chaka-model-select').value;
-            }
-            socket.emit('update_config', { sessionId: activeSessionId, updates });
-            showToast('Engine Deployed');
-        }
+        // AI engine selection is fully managed by the platform (DeepSeek for text,
+        // Gemini for vision/audio). No user-facing engine controls.
 
         function triggerSelfTrain() {
             if (!activeSessionId) return;

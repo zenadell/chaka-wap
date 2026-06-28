@@ -1,20 +1,24 @@
 FROM node:20-slim
 
-# Install dependencies for canvas/sqlite if needed
-RUN apt-get update && apt-get install -y \
+# Build tooling required to compile native modules (sqlite3).
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
+ENV NODE_ENV=production
+
 WORKDIR /app
 
+# Install dependencies from the lockfile for reproducible builds. Fall back to
+# `npm install` only if the lockfile is missing.
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --omit=dev || npm install --omit=dev
 
 COPY . .
 
-# Ensure the data directory exists
+# Persistent storage for SQLite + WhatsApp session state (Fly volume mounts here).
 RUN mkdir -p /app/data
 
 EXPOSE 3000
