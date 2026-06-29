@@ -207,6 +207,25 @@
         <div class="text-brandOrange text-sm font-semibold tracking-wide">Loading…</div>
     </div>
 
+    <!-- Reusable app modal (replaces native prompt/confirm) -->
+    <div id="app-modal" class="hidden fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+        <div class="bg-card border border-borderMuted rounded-2xl p-6 w-full max-w-sm shadow-2xl relative overflow-hidden animate-fade-in">
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brandOrange to-yellow-500"></div>
+            <div class="flex items-start gap-3 mb-2">
+                <div id="app-modal-icon" class="w-9 h-9 shrink-0 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center"><i class="fas fa-circle-plus"></i></div>
+                <div class="min-w-0">
+                    <h3 id="app-modal-title" class="text-base font-bold text-white leading-tight"></h3>
+                    <p id="app-modal-msg" class="text-textMuted text-xs mt-1 hidden"></p>
+                </div>
+            </div>
+            <input id="app-modal-input" class="hidden w-full bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-brandOrange/60 mt-3" autocomplete="off" />
+            <div class="flex justify-end gap-2 mt-5">
+                <button id="app-modal-cancel" class="px-4 py-2.5 rounded-xl border border-borderMuted text-textMuted text-sm font-medium hover:text-white hover:border-white/40 transition">Cancel</button>
+                <button id="app-modal-ok" class="px-5 py-2.5 rounded-xl bg-brandOrange hover:bg-brandOrangeHover text-white text-sm font-semibold transition">OK</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Mobile Overlay -->
     <div id="mobile-overlay"
         class="fixed inset-0 bg-black/70 z-40 hidden backdrop-blur-sm transition-opacity duration-300 opacity-0"
@@ -1120,8 +1139,36 @@
             socket.emit('refresh_connection', activeSessionId);
         }
 
-        function createNewSession() {
-            const id = prompt("Enter Node Identifier (e.g., 'Alpha', 'Node-1'):");
+        // --- Reusable on-brand modal (replaces native prompt/confirm) ---
+        function appModal({ title, message = '', input = false, placeholder = '', okText = 'OK', icon = 'fa-circle-plus', danger = false }) {
+            return new Promise((resolve) => {
+                const modal = document.getElementById('app-modal');
+                const inp = document.getElementById('app-modal-input');
+                const okBtn = document.getElementById('app-modal-ok');
+                const cancelBtn = document.getElementById('app-modal-cancel');
+                const msgEl = document.getElementById('app-modal-msg');
+                const iconEl = document.getElementById('app-modal-icon');
+                document.getElementById('app-modal-title').textContent = title;
+                if (message) { msgEl.textContent = message; msgEl.classList.remove('hidden'); } else { msgEl.classList.add('hidden'); }
+                iconEl.innerHTML = `<i class="fas ${icon}"></i>`;
+                iconEl.className = `w-9 h-9 shrink-0 rounded-xl flex items-center justify-center ${danger ? 'bg-red-500/10 text-red-400' : 'bg-brandOrange/10 text-brandOrange'}`;
+                okBtn.textContent = okText;
+                okBtn.className = `px-5 py-2.5 rounded-xl text-white text-sm font-semibold transition ${danger ? 'bg-red-500 hover:bg-red-600' : 'bg-brandOrange hover:bg-brandOrangeHover'}`;
+                if (input) { inp.classList.remove('hidden'); inp.value = ''; inp.placeholder = placeholder; } else { inp.classList.add('hidden'); }
+                modal.classList.remove('hidden');
+                if (input) setTimeout(() => inp.focus(), 50);
+                const close = (val) => { modal.classList.add('hidden'); okBtn.onclick = cancelBtn.onclick = modal.onclick = inp.onkeydown = null; resolve(val); };
+                okBtn.onclick = () => close(input ? (inp.value.trim() || null) : true);
+                cancelBtn.onclick = () => close(input ? null : false);
+                modal.onclick = (e) => { if (e.target === modal) close(input ? null : false); };
+                inp.onkeydown = (e) => { if (e.key === 'Enter') close(inp.value.trim() || null); if (e.key === 'Escape') close(null); };
+            });
+        }
+        const customPrompt = (title, placeholder = '') => appModal({ title, input: true, placeholder, okText: 'Add' });
+        const customConfirm = (title, message = '', okText = 'Confirm') => appModal({ title, message, okText, danger: true, icon: 'fa-triangle-exclamation' });
+
+        async function createNewSession() {
+            const id = await customPrompt('Add a new node', "e.g. Alpha, Node-1, Sales");
             if (id) {
                 socket.emit('create_session', id);
                 selectSession(id);
@@ -1164,16 +1211,16 @@
             showToast('Scrape Initialized');
         }
 
-        function clearDatabase() {
+        async function clearDatabase() {
             if (!activeSessionId) return;
-            if (confirm("Purge all indexed data for this node? This cannot be undone.")) {
+            if (await customConfirm('Purge all indexed data?', 'This permanently deletes this node\'s indexed messages. It cannot be undone.', 'Purge')) {
                 socket.emit('clear_database', activeSessionId);
             }
         }
 
-        function logoutSession() {
+        async function logoutSession() {
             if (!activeSessionId) return;
-            if (confirm("Logout and terminate this node?")) {
+            if (await customConfirm('Logout & terminate node?', 'This unlinks the WhatsApp session. You\'ll need to scan the QR again to reconnect.', 'Logout')) {
                 socket.emit('logout_session', activeSessionId);
                 location.reload();
             }
