@@ -219,7 +219,7 @@
 
     <script>
         const token = localStorage.getItem('token');
-        if (!token) window.location.href = '/login.html';
+        if (!token) window.location.replace('/login.html');
 
         const TYPES = {
             business:   { icon: 'fa-store',        label: 'Business Operations', desc: 'Customer support, quoting, and bookings.' },
@@ -333,9 +333,9 @@
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    window.location.href = '/index.html';
+                    window.location.replace('/index.html');
                 } else {
-                    if (res.status === 401) { window.location.href = '/login.html'; return; }
+                    if (res.status === 401) { window.location.replace('/login.html'); return; }
                     showError(data.error || 'Failed to complete setup.');
                     btn.disabled = false;
                     btn.innerHTML = original;
@@ -350,7 +350,7 @@
         // If already onboarded, skip straight to the dashboard.
         fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } })
             .then(r => r.ok ? r.json() : null)
-            .then(u => { if (u && u.onboarded) window.location.href = '/index.html'; })
+            .then(u => { if (u && u.onboarded) window.location.replace('/index.html'); })
             .catch(() => {});
     </script>
 </body>

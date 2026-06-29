@@ -84,6 +84,10 @@ const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepsee
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 // OpenRouter remains available as a fallback/alternate route to the same model family.
 const OPENROUTER_TEXT_MODEL = process.env.OPENROUTER_TEXT_MODEL || 'deepseek/deepseek-v4-flash';
+// Force a specific text engine platform-wide, overriding each user's saved choice.
+// Set FORCE_AI_ENGINE=gemini in regions where DeepSeek is unreachable (e.g. Fly lhr,
+// where DeepSeek completions hang). Leave unset to honour per-user active_api.
+const FORCE_AI_ENGINE = (process.env.FORCE_AI_ENGINE || '').trim().toLowerCase();
 // Gemini model for vision, audio transcription, and text fallback.
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
 let db;
@@ -285,6 +289,29 @@ async function initDB() {
             name TEXT NOT NULL,          -- product/service name, info label, or FAQ question
             detail TEXT,                 -- description / answer / value
             price TEXT,                  -- free-text price (optional, products/services)
+            created_at INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            session_id TEXT,
+            contact_id TEXT NOT NULL,
+            contact_name TEXT,
+            status TEXT DEFAULT 'new',   -- new | interested | hot | negotiating | won | lost
+            summary TEXT,                -- what they want / intent
+            created_at INTEGER,
+            updated_at INTEGER,
+            UNIQUE(user_id, session_id, contact_id)
+        );
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            session_id TEXT,
+            contact_id TEXT,
+            contact_name TEXT,
+            type TEXT DEFAULT 'handoff', -- handoff | lead | order | system
+            message TEXT,
+            handled INTEGER DEFAULT 0,
             created_at INTEGER
         );
     `);
@@ -1017,7 +1044,8 @@ app.get('/auth/google/callback', passport.authenticate('google', { session: fals
         <script>
             localStorage.setItem('token', '${token}');
             localStorage.setItem('user', JSON.stringify(${JSON.stringify({ id: user.id, email: user.email, displayName: user.display_name, role: user.role })}));
-            window.location.href = '/';
+            // Go straight into the app (the dashboard's guard routes to onboarding if needed).
+            window.location.replace('/index.html');
         </script>
     `);
   });
@@ -1317,6 +1345,76 @@ app.post('/api/account/password', authenticateToken, async (req, res) => {
         console.error('Password change error:', e);
         res.status(500).json({ error: 'Failed to change password.' });
     }
+});
+
+// --- CONTACTS: AUTO-REPLY (IGNORE LIST) ---
+// Search the user's contacts (across all their WhatsApp nodes). q filters by name/number;
+// ignored=1 returns only muted contacts. Keeps the UI simple — no need to pick a session.
+app.get('/api/contacts', authenticateToken, async (req, res) => {
+    const q = (req.query.q || '').toString().trim();
+    const ignoredOnly = req.query.ignored === '1';
+    const params = [req.user.id];
+    let where = 'user_id = ?';
+    if (ignoredOnly) where += ' AND auto_reply = 0';
+    if (q) { where += ' AND (name LIKE ? OR contact_id LIKE ?)'; params.push(`%${q}%`, `%${q}%`); }
+    const rows = await db.all(
+        `SELECT session_id, contact_id, name, jid, auto_reply, last_active
+         FROM contacts WHERE ${where}
+         ORDER BY (auto_reply = 0) DESC, last_active DESC LIMIT 60`, params
+    );
+    res.json(rows.map(r => ({
+        sessionId: r.session_id,
+        contactId: r.contact_id,
+        name: r.name || r.contact_id,
+        number: (r.contact_id || '').split('_')[0],
+        ignored: r.auto_reply === 0
+    })));
+});
+
+// Toggle whether the AI replies to a contact. enabled=false => ignore.
+app.post('/api/contacts/auto-reply', authenticateToken, async (req, res) => {
+    const { sessionId, contactId, enabled } = req.body || {};
+    if (!sessionId || !contactId) return res.status(400).json({ error: 'Missing contact.' });
+    const result = await db.run(
+        'UPDATE contacts SET auto_reply = ? WHERE user_id = ? AND session_id = ? AND contact_id = ?',
+        [enabled ? 1 : 0, req.user.id, sessionId, contactId]
+    );
+    res.json({ ok: true, changed: result.changes });
+});
+
+// Count of currently-ignored contacts (for the badge).
+app.get('/api/contacts/ignored-count', authenticateToken, async (req, res) => {
+    const row = await db.get('SELECT COUNT(*) as c FROM contacts WHERE user_id = ? AND auto_reply = 0', [req.user.id]);
+    res.json({ count: row.c });
+});
+
+// --- AGENTS: LEADS & NOTIFICATIONS ---
+app.get('/api/leads', authenticateToken, async (req, res) => {
+    const leads = await db.all(
+        `SELECT id, session_id, contact_id, contact_name, status, summary, created_at, updated_at
+         FROM leads WHERE user_id = ? ORDER BY updated_at DESC LIMIT 500`, [req.user.id]
+    );
+    res.json(leads);
+});
+
+app.post('/api/leads/:id/status', authenticateToken, async (req, res) => {
+    const status = (req.body?.status || '').toString().toLowerCase();
+    if (!['new', 'interested', 'hot', 'negotiating', 'won', 'lost'].includes(status)) return res.status(400).json({ error: 'Invalid status.' });
+    await db.run('UPDATE leads SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?', [status, Math.floor(Date.now() / 1000), req.params.id, req.user.id]);
+    res.json({ ok: true });
+});
+
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+    const items = await db.all(
+        `SELECT id, session_id, contact_id, contact_name, type, message, handled, created_at
+         FROM notifications WHERE user_id = ? ORDER BY handled ASC, created_at DESC LIMIT 200`, [req.user.id]
+    );
+    res.json(items);
+});
+
+app.post('/api/notifications/:id/handled', authenticateToken, async (req, res) => {
+    await db.run('UPDATE notifications SET handled = 1 WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+    res.json({ ok: true });
 });
 
 // --- ADMIN API ENDPOINTS ---
@@ -2119,6 +2217,13 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
         const scheduleRule = `- If the user asks you to remind them or someone else to do something later, output exactly: [SCHEDULE_MESSAGE: <YYYY-MM-DDTHH:MM:SSZ> | <ContactName OR "CURRENT"> | <The reminder message to send later>]. Use "CURRENT" if it's for the person you are currently talking to. Also include a brief immediate text acknowledging the schedule.`;
 
+        // Agent actions: hidden control tags the assistant appends AFTER its normal reply.
+        // The system strips them before sending, so the customer never sees them.
+        const agentActions = `- AGENT ACTIONS (silent — the customer must NEVER see these; put them on their own line at the very END of your message; still write a normal helpful reply above them):
+  • If the person shows buying interest, asks about a product/price, wants to order/book, or shares order/contact details, append: [LEAD: status=<interested|hot|negotiating|won|lost> | summary=<max 12 words on what they want>]
+  • If the chat needs the human owner — an upset/angry customer, a complaint or refund, a complex or high-value request, or they explicitly ask for a human — append: [HANDOFF: <short reason>]
+  Only use a tag when it genuinely applies. Never mention these tags in your words.`;
+
         // Persona is the source of truth. For professional accounts we explicitly forbid
         // the model from copying the other person's casual tone (the cause of off-brand
         // replies like "yo what's good" from a business assistant).
@@ -2127,7 +2232,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             : userPersona;
 
         const rulesBlock = isProfessional
-            ? `[RULES]\n- Always keep the role, voice, and tone described above. Never slip into slang, text-speak, or all-lowercase "lazy" texting, even if the other person does.\n- Be professional, warm, and genuinely helpful. Use correct grammar, spelling, and capitalization.\n- Keep replies concise (1-3 sentences) but complete — actually answer what was asked.\n- NEVER invent or assume business details — products, prices, services, stock, availability, hours, address, delivery, ordering or booking systems, discounts, or policies. Only state what's in your instructions above. If you weren't told it, you don't offer it.\n- Do NOT proactively pitch orders, bookings, or services. Let the person say what they need; if it's something you have no info on, offer to take their details for the owner to follow up.\n- If you don't know a specific detail, say you'll check rather than guessing or making it up.\n- Reply with ONE message only. Never repeat yourself or echo earlier phrases verbatim.\n- Light, fitting emoji use is okay; don't overdo it.\n${scheduleRule}`
+            ? `[RULES]\n- Always keep the role, voice, and tone described above. Never slip into slang, text-speak, or all-lowercase "lazy" texting, even if the other person does.\n- Be professional, warm, and genuinely helpful. Use correct grammar, spelling, and capitalization.\n- Keep replies concise (1-3 sentences) but complete — actually answer what was asked.\n- NEVER invent or assume business details — products, prices, services, stock, availability, hours, address, delivery, ordering or booking systems, discounts, or policies. Only state what's in your instructions above. If you weren't told it, you don't offer it.\n- Do NOT proactively pitch orders, bookings, or services. Let the person say what they need; if it's something you have no info on, offer to take their details for the owner to follow up.\n- If you don't know a specific detail, say you'll check rather than guessing or making it up.\n- Reply with ONE message only. Never repeat yourself or echo earlier phrases verbatim.\n- Light, fitting emoji use is okay; don't overdo it.\n${scheduleRule}\n${agentActions}`
             : `[RULES]\n- Reply with ONE single message only. NEVER repeat yourself.\n- Keep replies extremely short, lazy, and conversational (1-2 lines max).\n- DO NOT act like an AI or an eager assistant. Be a normal human texting.\n- STOP asking follow-up questions constantly. Only ask a question if completely necessary to continue the exact topic.\n- DO NOT use perfect grammar, punctuation, or capitalization unless the user does.\n- MATCH THE EXACT STYLE AND VIBE OF THE PROVIDED STYLE SAMPLES.\n- ONLY use emojis if they perfectly match the user's current tone and style samples. Do not overuse them.\n- NEVER repeat any phrase from the conversation history verbatim.\n- If you don't know something, say so briefly. Don't make things up.\n${scheduleRule}`;
 
         let systemInstruction = `[CURRENT TIME: ${new Date().toISOString()}]\n[IDENTITY] ${CORE_IDENTITY}\n\n${personaHeader}${kbContext}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}\n\n${rulesBlock}`;
@@ -2565,6 +2670,45 @@ async function startSession(userId, sessionId) {
                             console.error("Schedule Parse Error", e);
                         }
                         replyText = replyText.replace(scheduleRegex, '').trim();
+                    }
+
+                    // --- AGENT: LEAD CAPTURE ---
+                    const leadRegex = /\[LEAD:\s*status\s*=\s*([^|\]]+?)\s*(?:\|\s*summary\s*=\s*([^\]]*?))?\]/i;
+                    const leadMatch = replyText.match(leadRegex);
+                    if (leadMatch) {
+                        try {
+                            const raw = (leadMatch[1] || 'interested').trim().toLowerCase();
+                            const status = ['interested', 'hot', 'negotiating', 'won', 'lost'].includes(raw) ? raw : 'interested';
+                            const summary = (leadMatch[2] || '').trim().slice(0, 200);
+                            const nowTs = Math.floor(Date.now() / 1000);
+                            await db.run(
+                                `INSERT INTO leads (user_id, session_id, contact_id, contact_name, status, summary, created_at, updated_at)
+                                 VALUES (?,?,?,?,?,?,?,?)
+                                 ON CONFLICT(user_id, session_id, contact_id) DO UPDATE SET
+                                   status=excluded.status, summary=excluded.summary, contact_name=excluded.contact_name, updated_at=excluded.updated_at`,
+                                [userId, sessionId, cleanId, contactName, status, summary, nowTs, nowTs]
+                            );
+                            io.emit('lead_update', { sessionId, contactId: cleanId, contactName, status, summary });
+                            io.emit('log', { sessionId, msg: `🎯 Lead: ${contactName} → ${status}${summary ? ` (${summary})` : ''}` });
+                        } catch (e) { console.error('Lead capture error:', e.message); }
+                        replyText = replyText.replace(leadRegex, '').trim();
+                    }
+
+                    // --- AGENT: HUMAN HANDOFF ---
+                    const handoffRegex = /\[HANDOFF:\s*([^\]]+)\]/i;
+                    const handoffMatch = replyText.match(handoffRegex);
+                    if (handoffMatch) {
+                        try {
+                            const reason = (handoffMatch[1] || 'Needs owner attention').trim().slice(0, 300);
+                            const nowTs = Math.floor(Date.now() / 1000);
+                            await db.run(
+                                `INSERT INTO notifications (user_id, session_id, contact_id, contact_name, type, message, created_at) VALUES (?,?,?,?,?,?,?)`,
+                                [userId, sessionId, cleanId, contactName, 'handoff', reason, nowTs]
+                            );
+                            io.emit('notification', { sessionId, contactId: cleanId, contactName, type: 'handoff', message: reason, timestamp: Date.now() });
+                            io.emit('log', { sessionId, msg: `🚨 HANDOFF needed: ${contactName} — ${reason}` });
+                        } catch (e) { console.error('Handoff error:', e.message); }
+                        replyText = replyText.replace(handoffRegex, '').trim();
                     }
 
                     if (!replyText || replyText.length === 0) continue;

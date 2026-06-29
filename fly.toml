@@ -1,6 +1,7 @@
 # fly.toml app configuration file
 app = "chaka-wap-bot"
-primary_region = "lhr"
+# Moved to iad (US-East): DeepSeek completions hang from lhr/London but work from iad.
+primary_region = "iad"
 
 [http_service]
   internal_port = 3000
@@ -26,4 +27,4 @@ primary_region = "lhr"
 [env]
   NODE_ENV = "production"
   PORT = "3000"
-  ACTIVE_API = "openrouter"
+  ACTIVE_API = "deepseek"

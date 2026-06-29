@@ -201,10 +201,10 @@
 
 <body class="flex h-screen h-dvh antialiased selection:bg-brandOrange/30 relative no-overflow-x">
 
-    <!-- Loader -->
-    <div id="global-loader" class="loader-overlay">
+    <!-- Loader (shown until the onboarding check resolves, so the dashboard never flashes) -->
+    <div id="global-loader" class="loader-overlay" style="display:flex">
         <div class="spinner mb-4"></div>
-        <div class="text-brandOrange text-sm font-semibold tracking-wide">Syncing Data...</div>
+        <div class="text-brandOrange text-sm font-semibold tracking-wide">Loading…</div>
     </div>
 
     <!-- Mobile Overlay -->
@@ -349,6 +349,23 @@
                     </div>
                 </div>
 
+                <!-- Auto-Reply Control / Ignore List -->
+                <div class="bg-card rounded-[28px] md:rounded-[36px] p-6 md:p-8 mb-8 border border-borderMuted/40 shadow-xl">
+                    <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+                        <h3 class="text-lg md:text-xl font-bold flex items-center gap-2">
+                            <i class="fas fa-user-slash text-brandOrange"></i> Who the AI ignores
+                            <span id="ignored-badge" class="hidden text-[10px] bg-brandOrange text-white px-2 py-0.5 rounded-full"></span>
+                        </h3>
+                        <span class="text-[11px] text-textMuted">Muted contacts get no auto-reply</span>
+                    </div>
+                    <p class="text-textMuted text-xs mb-4">Search a contact and flip the switch to stop the AI replying to them. Everyone else is replied to as normal.</p>
+                    <div class="relative mb-4">
+                        <i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-textMuted text-sm"></i>
+                        <input id="contact-search" placeholder="Search by name or number…" class="w-full bg-base border border-borderMuted rounded-xl pl-11 pr-4 py-3 text-sm outline-none focus:border-brandOrange/60" />
+                    </div>
+                    <div id="contact-results" class="space-y-2 max-h-72 overflow-y-auto"></div>
+                </div>
+
                 <!-- Business Knowledge (business accounts only) -->
                 <div id="business-kb" class="hidden bg-card rounded-[28px] md:rounded-[36px] p-6 md:p-8 mb-8 border border-borderMuted/40 shadow-xl">
                     <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
@@ -397,6 +414,26 @@
                     </div>
                 </div>
 
+                <!-- Leads & Alerts (agents, business accounts) -->
+                <div id="leads-panel" class="hidden grid lg:grid-cols-2 gap-6 mb-8">
+                    <div class="bg-card rounded-[28px] p-6 border border-borderMuted/40 shadow-xl">
+                        <div class="flex items-center justify-between mb-1">
+                            <h3 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-bullseye text-brandOrange"></i> Leads</h3>
+                            <span class="text-[11px] text-textMuted">Captured automatically from chats</span>
+                        </div>
+                        <p class="text-textMuted text-xs mb-4">People showing interest — your AI flags them as it chats.</p>
+                        <div id="leads-list" class="space-y-2 max-h-72 overflow-y-auto"><p class="text-textMuted text-sm text-center py-6">No leads yet.</p></div>
+                    </div>
+                    <div class="bg-card rounded-[28px] p-6 border border-borderMuted/40 shadow-xl">
+                        <div class="flex items-center justify-between mb-1">
+                            <h3 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-bell text-brandOrange"></i> Needs You <span id="alert-count" class="hidden ml-1 text-[10px] bg-red-500 text-white px-2 py-0.5 rounded-full"></span></h3>
+                            <span class="text-[11px] text-textMuted">Chats your AI escalated</span>
+                        </div>
+                        <p class="text-textMuted text-xs mb-4">The AI taps you in for complaints, big deals, or anything it can't handle.</p>
+                        <div id="alerts-list" class="space-y-2 max-h-72 overflow-y-auto"><p class="text-textMuted text-sm text-center py-6">All clear — nothing needs you.</p></div>
+                    </div>
+                </div>
+
                 <!-- Scan Section -->
                 <div id="qr-section"
                     class="bg-card rounded-[32px] p-10 mb-8 flex flex-col items-center justify-center hidden border border-borderMuted shadow-inner max-w-2xl mx-auto w-full">
@@ -409,7 +446,7 @@
                 </div>
 
                 <!-- Target Configuration -->
-                <div id="settings-area" class="flex-1 flex flex-col min-h-0">
+                <div id="settings-area" class="flex flex-col">
                     <div
                         class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 sticky top-0 bg-base z-10 py-2">
                         <h3 class="text-sm md:text-lg font-bold text-white flex items-center gap-3">
@@ -625,23 +662,30 @@
 
     <script>
         const token = localStorage.getItem('token');
+        const hideLoader = () => { const l = document.getElementById('global-loader'); if (l) l.style.display = 'none'; };
         if (!token) {
-            window.location.href = '/login.html';
+            window.location.replace('/login.html');
         }
 
-        // Onboarding guard: new users must pick an account type so the AI is
-        // configured to their goals before they reach the dashboard.
+        // Onboarding guard: new users must pick an account type before reaching the
+        // dashboard. The loader stays up until this resolves so the dashboard never
+        // flashes, and we use location.replace so Back can't bypass onboarding.
         fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } })
             .then(r => r.ok ? r.json() : null)
             .then(u => {
-                if (u && !u.onboarded) { window.location.href = '/onboarding.html'; return; }
+                if (!u) { window.location.replace('/login.html'); return; }
+                if (!u.onboarded) { window.location.replace('/onboarding.html'); return; }
+                hideLoader();
                 // Business Knowledge is for business accounts only.
-                if (u && u.account_type === 'business') {
+                if (u.account_type === 'business') {
                     document.getElementById('business-kb')?.classList.remove('hidden');
+                    document.getElementById('leads-panel')?.classList.remove('hidden');
                     loadKb();
+                    loadLeads();
+                    loadAlerts();
                 }
             })
-            .catch(() => {});
+            .catch(() => hideLoader());
 
         // --- BUSINESS KNOWLEDGE BASE ---
         let kbKind = 'product';
@@ -703,6 +747,101 @@
             if (res.ok) { document.getElementById('kb-bulk-text').value = ''; showToast(`Imported ${data.added} items`); loadKb(); }
             else { showToast(data.error || 'Import failed'); }
         }
+        // --- LEADS & ALERTS (agents) ---
+        const LEAD_COLORS = { new: '#71717A', interested: '#3B82F6', hot: '#FC5A38', negotiating: '#A855F7', won: '#22C55E', lost: '#71717A' };
+        async function loadLeads() {
+            try {
+                const res = await fetch('/api/leads', { headers: { 'Authorization': 'Bearer ' + token } });
+                if (!res.ok) return;
+                const leads = await res.json();
+                const el = document.getElementById('leads-list');
+                if (!leads.length) { el.innerHTML = '<p class="text-textMuted text-sm text-center py-6">No leads yet.</p>'; return; }
+                el.innerHTML = leads.map(l => {
+                    const c = LEAD_COLORS[l.status] || '#71717A';
+                    return `<div class="flex items-center justify-between gap-3 bg-base/60 border border-borderMuted/40 rounded-xl px-3 py-2.5">
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium truncate">${l.contact_name || l.contact_id}</div>
+                            ${l.summary ? `<div class="text-xs text-textMuted truncate">${l.summary}</div>` : ''}
+                        </div>
+                        <span class="text-[10px] uppercase font-bold px-2 py-1 rounded-md shrink-0" style="background:${c}1a;color:${c}">${l.status}</span>
+                    </div>`;
+                }).join('');
+            } catch (e) {}
+        }
+        async function loadAlerts() {
+            try {
+                const res = await fetch('/api/notifications', { headers: { 'Authorization': 'Bearer ' + token } });
+                if (!res.ok) return;
+                const items = (await res.json()).filter(n => !n.handled);
+                const el = document.getElementById('alerts-list');
+                const badge = document.getElementById('alert-count');
+                if (!items.length) { el.innerHTML = '<p class="text-textMuted text-sm text-center py-6">All clear — nothing needs you.</p>'; badge.classList.add('hidden'); return; }
+                badge.textContent = items.length; badge.classList.remove('hidden');
+                el.innerHTML = items.map(n => `
+                    <div class="flex items-start justify-between gap-3 bg-red-500/5 border border-red-500/20 rounded-xl px-3 py-2.5">
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium truncate">${n.contact_name || n.contact_id}</div>
+                            <div class="text-xs text-red-300/80">${n.message}</div>
+                        </div>
+                        <button onclick="dismissAlert(${n.id})" class="text-textMuted hover:text-green-400 transition shrink-0" title="Mark handled"><i class="fas fa-check text-xs"></i></button>
+                    </div>`).join('');
+            } catch (e) {}
+        }
+        async function dismissAlert(id) {
+            await fetch('/api/notifications/' + id + '/handled', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+            loadAlerts();
+        }
+
+        // --- IGNORE LIST (who the AI ignores) ---
+        const contactResults = document.getElementById('contact-results');
+        let contactSearchTimer = null;
+        function renderContacts(list, emptyMsg) {
+            if (!list.length) { contactResults.innerHTML = `<p class="text-textMuted text-sm text-center py-6">${emptyMsg}</p>`; return; }
+            contactResults.innerHTML = list.map(c => `
+                <div class="flex items-center justify-between gap-3 bg-base/60 border border-borderMuted/40 rounded-xl px-3 py-2.5">
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium truncate">${c.name}</div>
+                        <div class="text-xs text-textMuted truncate">${c.number || ''}</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer shrink-0" title="${c.ignored ? 'Ignored — flip to let AI reply' : 'AI replies — flip to ignore'}">
+                        <input type="checkbox" class="sr-only peer" ${c.ignored ? '' : 'checked'}
+                            onchange="setContactReply('${c.sessionId}','${c.contactId}', this.checked)">
+                        <div class="w-10 h-5 bg-red-500/40 rounded-full peer peer-checked:bg-green-500/60 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5"></div>
+                        <span class="ml-2 text-[11px] ${c.ignored ? 'text-red-400' : 'text-green-400'} w-12">${c.ignored ? 'Ignored' : 'Replies'}</span>
+                    </label>
+                </div>`).join('');
+        }
+        async function loadIgnored() {
+            try {
+                const res = await fetch('/api/contacts?ignored=1', { headers: { 'Authorization': 'Bearer ' + token } });
+                const list = res.ok ? await res.json() : [];
+                renderContacts(list, 'No one is ignored. Search above to mute a contact.');
+                const badge = document.getElementById('ignored-badge');
+                if (list.length) { badge.textContent = list.length + ' ignored'; badge.classList.remove('hidden'); }
+                else badge.classList.add('hidden');
+            } catch (e) {}
+        }
+        async function searchContacts(q) {
+            try {
+                const res = await fetch('/api/contacts?q=' + encodeURIComponent(q), { headers: { 'Authorization': 'Bearer ' + token } });
+                const list = res.ok ? await res.json() : [];
+                renderContacts(list, 'No contacts match. They must have messaged you first.');
+            } catch (e) {}
+        }
+        async function setContactReply(sessionId, contactId, replies) {
+            await fetch('/api/contacts/auto-reply', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, contactId, enabled: replies }) });
+            showToast(replies ? 'AI will reply to them' : 'Contact muted — AI will ignore them');
+            loadIgnored();
+        }
+        if (document.getElementById('contact-search')) {
+            document.getElementById('contact-search').addEventListener('input', (e) => {
+                clearTimeout(contactSearchTimer);
+                const q = e.target.value.trim();
+                contactSearchTimer = setTimeout(() => { q ? searchContacts(q) : loadIgnored(); }, 250);
+            });
+            loadIgnored();
+        }
+
         async function importKbFile() {
             const input = document.getElementById('kb-file');
             const file = input.files[0];
@@ -901,6 +1040,10 @@
             qrContainer.innerHTML = `<img src="${data.qr}" class="w-full h-full object-contain">`;
             qrSection.classList.remove('hidden');
         });
+
+        // Agents: refresh leads/alerts live as the AI captures them.
+        socket.on('lead_update', () => { if (!document.getElementById('leads-panel')?.classList.contains('hidden')) loadLeads(); });
+        socket.on('notification', () => { if (!document.getElementById('leads-panel')?.classList.contains('hidden')) { loadAlerts(); showToast('🚨 A chat needs your attention'); } });
 
         socket.on('config_data', (data) => {
             if (data.sessionId !== activeSessionId) return;
