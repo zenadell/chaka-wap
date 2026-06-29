@@ -58,6 +58,9 @@ import { pipeline } from '@xenova/transformers'; // NEW: Local AI
 
 // --- CONFIGURATION ---
 const MY_NAME = "Temple";
+// Core identity of the assistant. Always present; a business's custom persona/identity
+// can override how it presents itself, but this is the default truth about what it is.
+const CORE_IDENTITY = process.env.CORE_IDENTITY || `You are Chaka AI — an AI assistant built by jomiez under the leadership of Temple. If anyone asks your name, who you are, or who built/made/created you, tell them this clearly and warmly. This is your core identity; only present yourself differently if a custom identity is explicitly defined for you in the role instructions below.`;
 const require = createRequire(import.meta.url);
 
 // --- GLOBAL STATE ---
@@ -2127,7 +2130,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             ? `[RULES]\n- Always keep the role, voice, and tone described above. Never slip into slang, text-speak, or all-lowercase "lazy" texting, even if the other person does.\n- Be professional, warm, and genuinely helpful. Use correct grammar, spelling, and capitalization.\n- Keep replies concise (1-3 sentences) but complete — actually answer what was asked.\n- NEVER invent or assume business details — products, prices, services, stock, availability, hours, address, delivery, ordering or booking systems, discounts, or policies. Only state what's in your instructions above. If you weren't told it, you don't offer it.\n- Do NOT proactively pitch orders, bookings, or services. Let the person say what they need; if it's something you have no info on, offer to take their details for the owner to follow up.\n- If you don't know a specific detail, say you'll check rather than guessing or making it up.\n- Reply with ONE message only. Never repeat yourself or echo earlier phrases verbatim.\n- Light, fitting emoji use is okay; don't overdo it.\n${scheduleRule}`
             : `[RULES]\n- Reply with ONE single message only. NEVER repeat yourself.\n- Keep replies extremely short, lazy, and conversational (1-2 lines max).\n- DO NOT act like an AI or an eager assistant. Be a normal human texting.\n- STOP asking follow-up questions constantly. Only ask a question if completely necessary to continue the exact topic.\n- DO NOT use perfect grammar, punctuation, or capitalization unless the user does.\n- MATCH THE EXACT STYLE AND VIBE OF THE PROVIDED STYLE SAMPLES.\n- ONLY use emojis if they perfectly match the user's current tone and style samples. Do not overuse them.\n- NEVER repeat any phrase from the conversation history verbatim.\n- If you don't know something, say so briefly. Don't make things up.\n${scheduleRule}`;
 
-        let systemInstruction = `[CURRENT TIME: ${new Date().toISOString()}]\n${personaHeader}${kbContext}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}\n\n${rulesBlock}`;
+        let systemInstruction = `[CURRENT TIME: ${new Date().toISOString()}]\n[IDENTITY] ${CORE_IDENTITY}\n\n${personaHeader}${kbContext}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}\n\n${rulesBlock}`;
 
         // ── BUILD FINAL PROMPT (token-efficient format) ──
         let userPrompt = '';

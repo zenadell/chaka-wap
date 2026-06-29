@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,16 +7,22 @@
     <meta name="description" content="Chaka is an AI assistant that replies to your WhatsApp messages 24/7 — in your voice. For businesses, creators, freelancers, and personal chats.">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Poppins', 'sans-serif'] },
+                    fontFamily: { 
+                        sans: ['Inter', 'sans-serif'],
+                        heading: ['Manrope', 'sans-serif']
+                    },
                     colors: {
-                        base: '#18181A', card: '#222224', cardHover: '#2A2A2D',
-                        brandOrange: '#FC5A38', brandOrangeHover: '#E04A2A',
-                        textMuted: '#A1A1AA', borderMuted: '#333333',
+                        base: '#0B0B0E',
+                        card: '#121216',
+                        cardHover: '#18181D',
+                        brandOrange: '#FC5A38',
+                        textMuted: '#8F919E',
+                        borderMuted: '#222329',
                         waGreen: '#25D366'
                     }
                 }
@@ -24,248 +30,423 @@
         }
     </script>
     <style>
-        html { scroll-behavior: smooth; }
-        body { background-color: #18181A; color: #fff; }
-        .glow { background: radial-gradient(600px circle at 50% 0%, rgba(252,90,56,0.18), transparent 70%); }
-        .fade-up { opacity: 0; transform: translateY(20px); animation: fadeUp .7s ease forwards; }
-        @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
-        .chat-bubble-in { background:#222224; border:1px solid #333; }
-        .chat-bubble-out { background:#FC5A38; }
-        .nav-blur { background: rgba(24,24,26,0.7); backdrop-filter: blur(12px); }
-        .feat:hover { border-color: rgba(252,90,56,0.5); transform: translateY(-3px); }
-        .feat { transition: all .25s ease; }
-        @keyframes typing { 0%,60%,100%{opacity:.3} 30%{opacity:1} }
-        .dot { animation: typing 1.4s infinite; }
-        .dot:nth-child(2){ animation-delay:.2s } .dot:nth-child(3){ animation-delay:.4s }
+        body {
+            background-color: #0B0B0E;
+            color: #FFFFFF;
+            overflow-x: hidden;
+        }
+
+        /* Typography */
+        h1, h2, h3, h4, h5, h6 { font-family: 'Manrope', sans-serif; letter-spacing: -0.03em; }
+
+        /* Crisp Borders */
+        .bento-card {
+            background: #121216;
+            border: 1px solid #222329;
+            transition: border-color 0.4s ease, background 0.4s ease, transform 0.4s ease;
+        }
+        .bento-card:hover {
+            border-color: #FC5A38;
+            background: #15151A;
+            transform: translateY(-2px);
+        }
+
+        /* Glows & Gradients */
+        .text-gradient {
+            background: linear-gradient(135deg, #FFFFFF 0%, #A0A0A0 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .text-gradient-orange {
+            background: linear-gradient(135deg, #FC5A38 0%, #FF8A73 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .glow-text-orange {
+            position: relative;
+        }
+        .glow-text-orange::after {
+            content: 'WhatsApp workflow';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: linear-gradient(135deg, #FC5A38 0%, #FF8A73 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: blur(24px);
+            opacity: 0.4;
+            z-index: -1;
+        }
+        
+        /* Subtle Orange Ambient Light */
+        .ambient-light {
+            position: absolute;
+            top: 10%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(252, 90, 56, 0.15) 0%, rgba(252, 90, 56, 0) 70%);
+            z-index: -2;
+            pointer-events: none;
+        }
+
+        /* Button Styling */
+        .btn-primary {
+            background-color: #FC5A38;
+            color: #FFFFFF;
+            border: 1px solid #FC5A38;
+            box-shadow: 0 4px 14px 0 rgba(252, 90, 56, 0.39);
+            transition: all 0.2s ease;
+        }
+        .btn-primary:hover {
+            background-color: #e54d2e;
+            border-color: #e54d2e;
+            box-shadow: 0 6px 20px rgba(252, 90, 56, 0.5);
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            background-color: #121216;
+            color: #FFFFFF;
+            border: 1px solid #3A3D47;
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover {
+            background-color: #18181D;
+            border-color: #FC5A38;
+        }
+
+        /* Marquee */
+        .marquee-container {
+            display: flex;
+            overflow: hidden;
+            mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+            -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+        }
+        .marquee-content {
+            display: flex;
+            flex-shrink: 0;
+            align-items: center;
+            justify-content: space-around;
+            min-width: 100%;
+            animation: scroll 30s linear infinite;
+        }
+        @keyframes scroll {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-100%); }
+        }
+
+        /* Chat UI Clean */
+        .chat-container {
+            background: #0B0B0E;
+            border: 1px solid #222329;
+            box-shadow: 0 30px 60px -15px rgba(0,0,0,1), 0 0 0 1px rgba(252, 90, 56, 0.1);
+        }
+        .chat-bubble-in { background: #18181D; border: 1px solid #222329; }
+        .chat-bubble-out { background: #FC5A38; border: 1px solid #FC5A38; color: white; }
+
+        /* Navigation Grid Lines */
+        .bg-grid {
+            background-size: 50px 50px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            mask-image: linear-gradient(to bottom, black 30%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, black 30%, transparent 100%);
+        }
     </style>
 </head>
-<body class="font-sans antialiased overflow-x-hidden">
+<body class="selection:bg-brandOrange/30 selection:text-white">
+
+    <!-- Ambient Orange Glow -->
+    <div class="ambient-light"></div>
+
+    <!-- Grid Background -->
+    <div class="absolute inset-0 bg-grid h-[80vh] z-[-1] pointer-events-none"></div>
 
     <!-- NAV -->
-    <nav class="fixed top-0 inset-x-0 z-50 nav-blur border-b border-borderMuted/40">
-        <div class="max-w-6xl mx-auto px-5 h-16 flex items-center justify-between">
-            <a href="/" class="flex items-center gap-2.5">
-                <div class="w-9 h-9 bg-brandOrange/15 text-brandOrange rounded-xl flex items-center justify-center border border-brandOrange/20">
-                    <i class="fas fa-robot"></i>
+    <nav class="fixed top-0 inset-x-0 z-50 bg-[#0B0B0E]/80 backdrop-blur-md border-b border-[#222329]">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-3 group">
+                <div class="w-8 h-8 bg-brandOrange text-white border border-[#FC5A38] rounded-md flex items-center justify-center shadow-[0_0_15px_rgba(252,90,56,0.3)] group-hover:shadow-[0_0_20px_rgba(252,90,56,0.5)] transition-shadow">
+                    <i class="fas fa-robot text-sm"></i>
                 </div>
-                <span class="font-bold text-lg tracking-tight">Chaka</span>
+                <span class="font-heading font-bold text-lg text-white tracking-tight">Chaka</span>
             </a>
-            <div class="hidden md:flex items-center gap-8 text-sm text-textMuted">
-                <a href="#features" class="hover:text-white transition">Features</a>
-                <a href="#how" class="hover:text-white transition">How it works</a>
-                <a href="#who" class="hover:text-white transition">Who it's for</a>
+            <div class="hidden md:flex items-center gap-8 text-sm font-medium text-textMuted">
+                <a href="#features" class="hover:text-white transition-colors">Platform</a>
+                <a href="#how" class="hover:text-white transition-colors">Solutions</a>
+                <a href="#who" class="hover:text-white transition-colors">Customers</a>
             </div>
             <div class="flex items-center gap-3">
-                <a href="/login.html" class="text-sm font-medium text-textMuted hover:text-white transition px-3 py-2">Sign in</a>
-                <a href="/login.html?signup=1" class="text-sm font-semibold bg-brandOrange hover:bg-brandOrangeHover text-white px-4 py-2.5 rounded-full transition">Get started</a>
+                <a href="/login.html" class="text-sm font-medium text-textMuted hover:text-white transition-colors hidden sm:block px-3">Log in</a>
+                <a href="/login.html?signup=1" class="btn-primary text-sm font-semibold px-4 py-2 rounded-md">Start free trial</a>
             </div>
         </div>
     </nav>
 
     <!-- HERO -->
-    <header class="relative pt-32 pb-20 glow">
-        <div class="max-w-6xl mx-auto px-5 grid lg:grid-cols-2 gap-12 items-center">
-            <div class="fade-up">
-                <div class="inline-flex items-center gap-2 bg-card border border-borderMuted/60 rounded-full px-3.5 py-1.5 text-xs text-textMuted mb-6">
-                    <span class="w-2 h-2 rounded-full bg-waGreen animate-pulse"></span>
-                    AI replies, 24/7 — even while you sleep
-                </div>
-                <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.05] tracking-tight">
-                    Your WhatsApp,<br><span class="text-brandOrange">on autopilot.</span>
-                </h1>
-                <p class="text-textMuted text-lg mt-6 max-w-md leading-relaxed">
-                    Chaka answers your messages in your voice — handling customers, fans, clients and friends so you never leave anyone on read.
-                </p>
-                <div class="flex flex-wrap items-center gap-3 mt-8">
-                    <a href="/login.html?signup=1" class="bg-brandOrange hover:bg-brandOrangeHover text-white font-semibold px-7 py-3.5 rounded-full transition flex items-center gap-2 shadow-lg shadow-brandOrange/20">
-                        Get started free <i class="fas fa-arrow-right text-sm"></i>
-                    </a>
-                    <a href="#how" class="border border-borderMuted hover:border-white/40 text-white font-semibold px-7 py-3.5 rounded-full transition">
-                        See how it works
-                    </a>
-                </div>
-                <div class="flex items-center gap-6 mt-9 text-xs text-textMuted">
-                    <span class="flex items-center gap-2"><i class="fas fa-check text-waGreen"></i> Set up in minutes</span>
-                    <span class="flex items-center gap-2"><i class="fas fa-check text-waGreen"></i> No API keys needed</span>
-                    <span class="flex items-center gap-2"><i class="fas fa-check text-waGreen"></i> Replies in your style</span>
-                </div>
+    <header class="relative pt-40 pb-20">
+        <div class="max-w-5xl mx-auto px-6 text-center">
+            
+            <div class="inline-flex items-center gap-2 bg-[#121216] border border-[#222329] rounded-full px-4 py-1.5 text-xs font-medium text-textMuted mb-8 hover:border-brandOrange transition-colors cursor-pointer">
+                <span class="w-2 h-2 rounded-full bg-brandOrange animate-pulse"></span>
+                <span class="text-white/90">Chaka AI 2.0</span> is now generally available
+                <i class="fas fa-arrow-right ml-1 text-brandOrange"></i>
             </div>
+            
+            <h1 class="text-5xl sm:text-7xl font-extrabold leading-[1.05] tracking-tight mx-auto max-w-4xl text-gradient">
+                The future of your<br>
+                <span class="text-gradient-orange glow-text-orange relative inline-block">WhatsApp workflow</span>
+            </h1>
+            
+            <p class="text-textMuted text-lg sm:text-xl mt-6 max-w-2xl mx-auto leading-relaxed font-sans">
+                Powerful SaaS platform to manage your WhatsApp conversations, automate routine replies, and grow your business faster.
+            </p>
+            
+            <div class="flex flex-wrap items-center justify-center gap-4 mt-10">
+                <a href="/login.html?signup=1" class="btn-primary font-heading font-semibold px-7 py-3.5 rounded-md flex items-center gap-2 text-[15px]">
+                    Get Started <i class="fas fa-arrow-right text-xs"></i>
+                </a>
+                <a href="#features" class="btn-secondary font-heading font-semibold px-7 py-3.5 rounded-md flex items-center gap-2 text-[15px]">
+                    Explore Platform
+                </a>
+            </div>
+        </div>
 
-            <!-- Chat mockup -->
-            <div class="fade-up" style="animation-delay:.15s">
-                <div class="relative mx-auto max-w-sm">
-                    <div class="absolute -inset-4 bg-brandOrange/10 blur-3xl rounded-full"></div>
-                    <div class="relative bg-card border border-borderMuted/70 rounded-[28px] p-4 shadow-2xl">
-                        <div class="flex items-center gap-3 pb-3 border-b border-borderMuted/50">
-                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-brandOrange to-yellow-500 flex items-center justify-center font-bold text-sm">JD</div>
+        <!-- Dashboard Mockup (Clean SaaS Look) -->
+        <div class="max-w-4xl mx-auto px-6 mt-20 relative">
+            <div class="chat-container rounded-xl overflow-hidden p-1.5 relative z-10 backdrop-blur-xl bg-[#0B0B0E]/80">
+                <div class="bg-[#121216] rounded-lg border border-[#222329] overflow-hidden shadow-inner">
+                    
+                    <!-- Header -->
+                    <div class="flex items-center justify-between px-5 py-4 border-b border-[#222329] bg-[#0B0B0E]">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 bg-gradient-to-br from-[#18181D] to-[#222329] rounded-full border border-[#3A3D47] flex items-center justify-center text-textMuted text-xs"><i class="fas fa-user"></i></div>
                             <div>
-                                <div class="text-sm font-semibold">Jane (Customer)</div>
-                                <div class="text-[11px] text-waGreen flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-waGreen"></span> Chaka is replying…</div>
+                                <div class="text-sm font-heading font-semibold text-white/90 tracking-tight">Jane Doe</div>
+                                <div class="text-[11px] font-sans text-brandOrange flex items-center gap-1.5 font-medium">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-brandOrange animate-pulse"></span> AI Active
+                                </div>
                             </div>
                         </div>
-                        <div class="space-y-3 py-4 text-sm">
-                            <div class="chat-bubble-in rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[80%]">Hi! Are you open this Sunday? 😊</div>
-                            <div class="chat-bubble-out rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[85%] ml-auto text-white">Hey Jane! Yes — we're open Sunday 10am–4pm. Want me to reserve a table? 🎉</div>
-                            <div class="chat-bubble-in rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[80%]">Perfect, table for 2 at noon please</div>
-                            <div class="chat-bubble-out rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[85%] ml-auto text-white">Done ✅ Table for 2, Sunday 12pm. See you then!</div>
-                            <div class="flex items-center gap-1 pl-2">
-                                <span class="dot w-1.5 h-1.5 bg-textMuted rounded-full"></span>
-                                <span class="dot w-1.5 h-1.5 bg-textMuted rounded-full"></span>
-                                <span class="dot w-1.5 h-1.5 bg-textMuted rounded-full"></span>
-                            </div>
+                        <div class="flex gap-2">
+                            <div class="w-8 h-8 rounded-md hover:bg-[#18181D] flex items-center justify-center transition-colors text-textMuted cursor-pointer"><i class="fas fa-phone-alt text-xs"></i></div>
+                            <div class="w-8 h-8 rounded-md hover:bg-[#18181D] flex items-center justify-center transition-colors text-textMuted cursor-pointer"><i class="fas fa-video text-xs"></i></div>
+                            <div class="w-8 h-8 rounded-md hover:bg-[#18181D] flex items-center justify-center transition-colors text-textMuted cursor-pointer"><i class="fas fa-ellipsis-v text-xs"></i></div>
                         </div>
                     </div>
+
+                    <!-- Chat Body -->
+                    <div class="space-y-5 px-6 py-8 text-[14px] font-sans">
+                        <div class="flex flex-col gap-1.5 items-start">
+                            <div class="chat-bubble-in rounded-2xl rounded-tl-sm px-4 py-3 max-w-[80%] text-white/90 shadow-sm leading-relaxed">Can you confirm the enterprise pricing tier details?</div>
+                            <span class="text-[11px] text-[#555968] ml-1 font-medium">11:42 AM</span>
+                        </div>
+
+                        <div class="flex flex-col gap-1.5 items-end">
+                            <div class="chat-bubble-out rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%] text-white shadow-md leading-relaxed">The enterprise tier starts at $499/mo and includes unlimited seats, advanced API access, and a dedicated success manager. Shall I send the full PDF breakdown?</div>
+                            <span class="text-[11px] text-[#555968] mr-1 font-medium">11:42 AM <i class="fas fa-check-double ml-0.5 text-brandOrange"></i></span>
+                        </div>
+                        
+                        <div class="flex flex-col gap-1.5 items-start">
+                            <div class="chat-bubble-in rounded-2xl rounded-tl-sm px-4 py-3 max-w-[80%] text-white/90 shadow-sm leading-relaxed">Yes please, that would be great.</div>
+                            <span class="text-[11px] text-[#555968] ml-1 font-medium">11:44 AM</span>
+                        </div>
+                        
+                        <div class="flex items-center gap-1.5 pl-4 pt-2">
+                            <span class="w-1.5 h-1.5 bg-brandOrange rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+                            <span class="w-1.5 h-1.5 bg-brandOrange rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+                            <span class="w-1.5 h-1.5 bg-brandOrange rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+                        </div>
+                    </div>
+                    
+                    <!-- Input Area Mockup -->
+                    <div class="px-5 py-4 border-t border-[#222329] bg-[#0B0B0E] flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full bg-[#18181D] flex items-center justify-center text-textMuted"><i class="fas fa-plus text-xs"></i></div>
+                        <div class="flex-1 bg-[#18181D] border border-[#222329] rounded-full h-10 px-4 flex items-center">
+                            <span class="text-[#555968] text-sm">Type a message...</span>
+                        </div>
+                        <div class="w-10 h-10 rounded-full bg-brandOrange flex items-center justify-center text-white shadow-lg shadow-brandOrange/20"><i class="fas fa-microphone text-sm"></i></div>
+                    </div>
+
                 </div>
             </div>
+            
         </div>
     </header>
 
-    <!-- TRUST STRIP -->
-    <section class="border-y border-borderMuted/40 py-8">
-        <div class="max-w-5xl mx-auto px-5 grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-            <div><div class="text-2xl font-extrabold text-brandOrange">24/7</div><div class="text-xs text-textMuted mt-1">Always replying</div></div>
-            <div><div class="text-2xl font-extrabold text-brandOrange">&lt; 2s</div><div class="text-xs text-textMuted mt-1">Avg. response</div></div>
-            <div><div class="text-2xl font-extrabold text-brandOrange">Multi</div><div class="text-xs text-textMuted mt-1">WhatsApp accounts</div></div>
-            <div><div class="text-2xl font-extrabold text-brandOrange">Text · 📷 · 🎙️</div><div class="text-xs text-textMuted mt-1">Understands it all</div></div>
-        </div>
-    </section>
-
-    <!-- FEATURES -->
-    <section id="features" class="py-24">
-        <div class="max-w-6xl mx-auto px-5">
-            <div class="text-center max-w-2xl mx-auto mb-14">
-                <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Everything you need to never miss a message</h2>
-                <p class="text-textMuted mt-4">Chaka plugs into your WhatsApp and handles conversations like you would — only it never sleeps.</p>
-            </div>
-            <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-bolt"></i></div>
-                    <h3 class="font-semibold mb-2">Instant auto-replies</h3>
-                    <p class="text-sm text-textMuted">Every message gets a thoughtful reply in seconds, around the clock.</p>
+    <!-- TRUST MARQUEE -->
+    <section class="border-y border-[#222329] py-10 bg-[#08080A]">
+        <div class="max-w-7xl mx-auto px-6 flex flex-col items-center">
+            <p class="text-[11px] font-bold tracking-[0.2em] text-[#555968] uppercase mb-8">Trusted by innovative teams worldwide</p>
+            <div class="marquee-container w-full opacity-60 hover:opacity-100 transition-opacity duration-500">
+                <div class="marquee-content gap-20 pr-20 text-2xl font-heading font-extrabold text-[#3A3D47]">
+                    <span>ACME Corp</span>
+                    <span>GlobalTech</span>
+                    <span>Synergy</span>
+                    <span>Nexus</span>
+                    <span>Vertex</span>
+                    <span>Quantum</span>
+                    <span>ACME Corp</span>
+                    <span>GlobalTech</span>
+                    <span>Synergy</span>
+                    <span>Nexus</span>
                 </div>
-                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-wand-magic-sparkles"></i></div>
-                    <h3 class="font-semibold mb-2">Sounds just like you</h3>
-                    <p class="text-sm text-textMuted">Tell Chaka your goals and tone — it replies in your voice, not a robot's.</p>
-                </div>
-                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-image"></i></div>
-                    <h3 class="font-semibold mb-2">Sees images & hears voice notes</h3>
-                    <p class="text-sm text-textMuted">Understands photos and transcribes voice notes, then responds in context.</p>
-                </div>
-                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-layer-group"></i></div>
-                    <h3 class="font-semibold mb-2">Multiple accounts</h3>
-                    <p class="text-sm text-textMuted">Run several WhatsApp numbers from one dashboard — business and personal.</p>
-                </div>
-                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-clock"></i></div>
-                    <h3 class="font-semibold mb-2">Scheduled messages</h3>
-                    <p class="text-sm text-textMuted">Queue follow-ups and reminders that send automatically at the right time.</p>
-                </div>
-                <div class="feat bg-card border border-borderMuted/60 rounded-2xl p-6">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-sliders"></i></div>
-                    <h3 class="font-semibold mb-2">You're always in control</h3>
-                    <p class="text-sm text-textMuted">Toggle auto-reply per contact, switch to draft mode, or take over anytime.</p>
+                <div class="marquee-content gap-20 pr-20 text-2xl font-heading font-extrabold text-[#3A3D47]" aria-hidden="true">
+                    <span>ACME Corp</span>
+                    <span>GlobalTech</span>
+                    <span>Synergy</span>
+                    <span>Nexus</span>
+                    <span>Vertex</span>
+                    <span>Quantum</span>
+                    <span>ACME Corp</span>
+                    <span>GlobalTech</span>
+                    <span>Synergy</span>
+                    <span>Nexus</span>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- HOW IT WORKS -->
-    <section id="how" class="py-24 bg-card/30 border-y border-borderMuted/40">
-        <div class="max-w-5xl mx-auto px-5">
-            <div class="text-center mb-14">
-                <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Live in 3 simple steps</h2>
-                <p class="text-textMuted mt-4">No code, no API keys — just connect and go.</p>
+    <!-- BENTO BOX FEATURES -->
+    <section id="features" class="py-32 relative">
+        <div class="absolute left-0 top-1/2 -translate-y-1/2 w-96 h-96 bg-brandOrange/5 rounded-full blur-[100px] pointer-events-none"></div>
+        <div class="max-w-7xl mx-auto px-6 relative z-10">
+            <div class="mb-20">
+                <div class="inline-flex items-center gap-2 border border-brandOrange/30 bg-brandOrange/5 rounded-full px-3 py-1 text-xs font-medium text-brandOrange mb-6">
+                    <i class="fas fa-layer-group"></i> Platform Features
+                </div>
+                <h2 class="text-4xl sm:text-5xl font-extrabold tracking-tight text-gradient">Everything you need<br>to scale your communication.</h2>
             </div>
-            <div class="grid md:grid-cols-3 gap-8">
-                <div class="text-center">
-                    <div class="w-14 h-14 mx-auto rounded-2xl bg-brandOrange text-white flex items-center justify-center text-xl font-bold mb-5">1</div>
-                    <h3 class="font-semibold mb-2">Create your account</h3>
-                    <p class="text-sm text-textMuted">Sign up in seconds and tell us how you'll use Chaka.</p>
+            
+            <!-- Bento Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                <!-- Large Card -->
+                <div class="md:col-span-2 bento-card rounded-2xl p-10 flex flex-col justify-between group min-h-[340px] relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-64 h-64 bg-brandOrange/5 rounded-full blur-[60px] transform translate-x-1/2 -translate-y-1/2 group-hover:bg-brandOrange/10 transition-colors duration-500"></div>
+                    <div class="w-14 h-14 bg-[#18181D] border border-[#3A3D47] group-hover:border-brandOrange/50 rounded-xl flex items-center justify-center text-white mb-8 transition-colors relative z-10 shadow-lg">
+                        <i class="fas fa-bolt text-lg group-hover:text-brandOrange transition-colors"></i>
+                    </div>
+                    <div class="relative z-10">
+                        <h3 class="text-2xl font-heading font-bold text-white mb-3">Instant automation</h3>
+                        <p class="text-[#8F919E] font-sans text-base max-w-lg leading-relaxed">Every message gets a thoughtful, context-aware reply in seconds. Our engine runs 24/7 so you never leave a lead waiting.</p>
+                    </div>
                 </div>
-                <div class="text-center">
-                    <div class="w-14 h-14 mx-auto rounded-2xl bg-brandOrange text-white flex items-center justify-center text-xl font-bold mb-5">2</div>
-                    <h3 class="font-semibold mb-2">Scan the QR code</h3>
-                    <p class="text-sm text-textMuted">Link your WhatsApp by scanning a QR — just like WhatsApp Web.</p>
+
+                <!-- Small Card -->
+                <div class="bento-card rounded-2xl p-10 flex flex-col justify-between group min-h-[340px] relative overflow-hidden">
+                    <div class="absolute bottom-0 right-0 w-40 h-40 bg-brandOrange/5 rounded-full blur-[40px] group-hover:bg-brandOrange/10 transition-colors duration-500"></div>
+                    <div class="w-14 h-14 bg-[#18181D] border border-[#3A3D47] group-hover:border-brandOrange/50 rounded-xl flex items-center justify-center text-white mb-8 transition-colors relative z-10 shadow-lg">
+                        <i class="fas fa-microphone text-lg group-hover:text-brandOrange transition-colors"></i>
+                    </div>
+                    <div class="relative z-10">
+                        <h3 class="text-xl font-heading font-bold text-white mb-3">Voice & Vision</h3>
+                        <p class="text-[#8F919E] font-sans text-sm leading-relaxed">Transcribes audio notes and analyzes incoming photos.</p>
+                    </div>
                 </div>
-                <div class="text-center">
-                    <div class="w-14 h-14 mx-auto rounded-2xl bg-brandOrange text-white flex items-center justify-center text-xl font-bold mb-5">3</div>
-                    <h3 class="font-semibold mb-2">Let Chaka reply</h3>
-                    <p class="text-sm text-textMuted">Sit back — your assistant handles conversations in your style.</p>
+
+                <!-- Small Card -->
+                <div class="bento-card rounded-2xl p-10 flex flex-col justify-between group min-h-[340px] relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-40 h-40 bg-brandOrange/5 rounded-full blur-[40px] group-hover:bg-brandOrange/10 transition-colors duration-500"></div>
+                    <div class="w-14 h-14 bg-[#18181D] border border-[#3A3D47] group-hover:border-brandOrange/50 rounded-xl flex items-center justify-center text-white mb-8 transition-colors relative z-10 shadow-lg">
+                        <i class="fas fa-users text-lg group-hover:text-brandOrange transition-colors"></i>
+                    </div>
+                    <div class="relative z-10">
+                        <h3 class="text-xl font-heading font-bold text-white mb-3">Multi-Agent Setup</h3>
+                        <p class="text-[#8F919E] font-sans text-sm leading-relaxed">Connect unlimited numbers to a single centralized dashboard.</p>
+                    </div>
                 </div>
+
+                <!-- Large Card -->
+                <div class="md:col-span-2 bento-card rounded-2xl p-10 flex flex-col justify-between group min-h-[340px] relative overflow-hidden">
+                    <div class="absolute bottom-0 right-0 w-64 h-64 bg-brandOrange/5 rounded-full blur-[60px] transform translate-x-1/4 translate-y-1/4 group-hover:bg-brandOrange/10 transition-colors duration-500"></div>
+                    <div class="w-14 h-14 bg-[#18181D] border border-[#3A3D47] group-hover:border-brandOrange/50 rounded-xl flex items-center justify-center text-white mb-8 transition-colors relative z-10 shadow-lg">
+                        <i class="fas fa-shield-alt text-lg group-hover:text-brandOrange transition-colors"></i>
+                    </div>
+                    <div class="relative z-10">
+                        <h3 class="text-2xl font-heading font-bold text-white mb-3">Enterprise-grade Control</h3>
+                        <p class="text-[#8F919E] font-sans text-base max-w-lg leading-relaxed">Toggle auto-reply per contact, set strict behavioral rules, or require human approval for high-value leads before a message is sent.</p>
+                    </div>
+                </div>
+
             </div>
         </div>
     </section>
 
-    <!-- WHO IT'S FOR -->
-    <section id="who" class="py-24">
-        <div class="max-w-6xl mx-auto px-5">
-            <div class="text-center max-w-2xl mx-auto mb-14">
-                <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Built for the way you chat</h2>
-                <p class="text-textMuted mt-4">Pick your style at signup and Chaka configures itself to your goals.</p>
-            </div>
-            <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                <div class="bg-card border border-borderMuted/60 rounded-2xl p-6 hover:border-brandOrange/50 transition">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-store"></i></div>
-                    <h3 class="font-semibold mb-2">Business owners</h3>
-                    <p class="text-sm text-textMuted">Answer customers, quote prices and take bookings — automatically.</p>
+    <!-- METRICS SECTION -->
+    <section class="py-32 border-t border-[#222329] bg-[#08080A]">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-20 items-center">
+                <div>
+                    <h2 class="text-4xl font-heading font-extrabold mb-6 text-gradient tracking-tight">Built for performance<br>and reliability.</h2>
+                    <p class="text-[#8F919E] font-sans text-lg mb-8 max-w-md leading-relaxed">Our infrastructure is designed to handle high-throughput messaging without dropping a single webhook or delaying a response.</p>
+                    <a href="#how" class="text-brandOrange font-heading font-semibold hover:text-white transition-colors flex items-center gap-2 group">
+                        View documentation <i class="fas fa-arrow-right text-xs group-hover:translate-x-1 transition-transform"></i>
+                    </a>
                 </div>
-                <div class="bg-card border border-borderMuted/60 rounded-2xl p-6 hover:border-brandOrange/50 transition">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-star"></i></div>
-                    <h3 class="font-semibold mb-2">Creators</h3>
-                    <p class="text-sm text-textMuted">Keep fans engaged and never miss a DM, even at scale.</p>
-                </div>
-                <div class="bg-card border border-borderMuted/60 rounded-2xl p-6 hover:border-brandOrange/50 transition">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-briefcase"></i></div>
-                    <h3 class="font-semibold mb-2">Freelancers</h3>
-                    <p class="text-sm text-textMuted">Handle client questions, scheduling and follow-ups effortlessly.</p>
-                </div>
-                <div class="bg-card border border-borderMuted/60 rounded-2xl p-6 hover:border-brandOrange/50 transition">
-                    <div class="w-11 h-11 rounded-xl bg-brandOrange/10 text-brandOrange flex items-center justify-center mb-4"><i class="fas fa-face-smile"></i></div>
-                    <h3 class="font-semibold mb-2">Personal & fun</h3>
-                    <p class="text-sm text-textMuted">Casual replies to friends in your own voice when you're busy.</p>
+                
+                <div class="grid grid-cols-2 gap-6">
+                    <div class="bg-[#121216] border border-[#222329] hover:border-[#3A3D47] transition-colors rounded-2xl p-8 shadow-lg">
+                        <div class="text-5xl font-heading font-bold text-white mb-3">99.9<span class="text-brandOrange">%</span></div>
+                        <div class="text-[11px] text-[#555968] font-sans uppercase tracking-[0.15em] font-bold">Uptime SLA</div>
+                    </div>
+                    <div class="bg-[#121216] border border-[#222329] hover:border-[#3A3D47] transition-colors rounded-2xl p-8 shadow-lg">
+                        <div class="text-5xl font-heading font-bold text-white mb-3"><span class="text-brandOrange text-3xl align-top">&lt;</span>200<span class="text-brandOrange text-2xl">ms</span></div>
+                        <div class="text-[11px] text-[#555968] font-sans uppercase tracking-[0.15em] font-bold">Avg Latency</div>
+                    </div>
+                    <div class="bg-[#121216] border border-[#222329] hover:border-[#3A3D47] transition-colors rounded-2xl p-8 shadow-lg">
+                        <div class="text-5xl font-heading font-bold text-white mb-3 text-gradient">SOC 2</div>
+                        <div class="text-[11px] text-[#555968] font-sans uppercase tracking-[0.15em] font-bold">Compliance</div>
+                    </div>
+                    <div class="bg-[#121216] border border-[#222329] hover:border-[#3A3D47] transition-colors rounded-2xl p-8 shadow-lg">
+                        <div class="text-5xl font-heading font-bold text-white mb-3 text-gradient">24/7</div>
+                        <div class="text-[11px] text-[#555968] font-sans uppercase tracking-[0.15em] font-bold">Support</div>
+                    </div>
                 </div>
             </div>
         </div>
     </section>
 
     <!-- CTA -->
-    <section class="py-24">
-        <div class="max-w-4xl mx-auto px-5">
-            <div class="relative overflow-hidden rounded-[32px] border border-brandOrange/20 bg-gradient-to-br from-brandOrange/15 via-card to-card p-10 sm:p-14 text-center">
-                <div class="absolute -top-20 -right-20 w-60 h-60 bg-brandOrange/20 blur-3xl rounded-full"></div>
-                <h2 class="relative text-3xl sm:text-4xl font-extrabold tracking-tight">Ready to put your chats on autopilot?</h2>
-                <p class="relative text-textMuted mt-4 max-w-lg mx-auto">Join the people letting Chaka handle their WhatsApp — so they can focus on everything else.</p>
-                <a href="/login.html?signup=1" class="relative inline-flex items-center gap-2 mt-8 bg-brandOrange hover:bg-brandOrangeHover text-white font-semibold px-8 py-4 rounded-full transition shadow-lg shadow-brandOrange/20">
-                    Get started free <i class="fas fa-arrow-right text-sm"></i>
+    <section class="py-32 border-t border-[#222329] relative overflow-hidden">
+        <div class="absolute bottom-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-brandOrange/10 rounded-t-[100%] blur-[80px] pointer-events-none"></div>
+        <div class="max-w-3xl mx-auto px-6 text-center relative z-10">
+            <h2 class="text-5xl sm:text-6xl font-heading font-extrabold tracking-tight mb-6 text-white">Start automating today.</h2>
+            <p class="text-[#8F919E] font-sans text-xl mb-12 max-w-2xl mx-auto leading-relaxed">Join thousands of modern teams managing their communication via Chaka's intelligent infrastructure.</p>
+            <div class="flex flex-wrap items-center justify-center gap-4">
+                <a href="/login.html?signup=1" class="btn-primary font-heading font-semibold px-8 py-4 rounded-md text-base shadow-xl shadow-brandOrange/20 hover:shadow-brandOrange/40">
+                    Create free account
+                </a>
+                <a href="#sales" class="bg-[#121216] border border-[#3A3D47] hover:border-brandOrange hover:bg-[#18181D] text-white font-heading font-semibold px-8 py-4 rounded-md text-base transition-all">
+                    Contact Sales
                 </a>
             </div>
         </div>
     </section>
 
     <!-- FOOTER -->
-    <footer class="border-t border-borderMuted/40 py-10">
-        <div class="max-w-6xl mx-auto px-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div class="flex items-center gap-2.5">
-                <div class="w-8 h-8 bg-brandOrange/15 text-brandOrange rounded-lg flex items-center justify-center border border-brandOrange/20 text-sm"><i class="fas fa-robot"></i></div>
-                <span class="font-bold">Chaka</span>
+    <footer class="border-t border-[#222329] py-12 bg-[#08080A]">
+        <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div class="flex items-center gap-2 group">
+                <div class="w-7 h-7 bg-brandOrange text-white border border-[#FC5A38] rounded-md flex items-center justify-center text-[11px] group-hover:shadow-[0_0_10px_rgba(252,90,56,0.4)] transition-shadow"><i class="fas fa-robot"></i></div>
+                <span class="font-heading font-bold text-sm text-white/90">Chaka Inc.</span>
             </div>
-            <p class="text-xs text-textMuted">© <span id="year"></span> Chaka. Your WhatsApp, on autopilot.</p>
-            <div class="flex items-center gap-5 text-sm">
-                <a href="/login.html" class="text-textMuted hover:text-white transition">Sign in</a>
-                <a href="/login.html?signup=1" class="text-brandOrange hover:text-brandOrangeHover font-medium transition">Get started</a>
+            <p class="text-[13px] font-sans text-[#555968]">© <span id="year"></span> All rights reserved.</p>
+            <div class="flex items-center gap-8 text-[13px] font-sans font-medium">
+                <a href="#" class="text-[#555968] hover:text-white transition-colors">Terms</a>
+                <a href="#" class="text-[#555968] hover:text-white transition-colors">Privacy</a>
+                <a href="/login.html" class="text-white hover:text-brandOrange transition-colors">Log in</a>
             </div>
         </div>
     </footer>
 
     <script>
         document.getElementById('year').textContent = new Date().getFullYear();
-        // If already signed in, send returning users straight to the dashboard.
         if (localStorage.getItem('token')) {
             const nav = document.querySelector('nav .flex.items-center.gap-3');
-            if (nav) nav.innerHTML = '<a href="/index.html" class="text-sm font-semibold bg-brandOrange hover:bg-brandOrangeHover text-white px-4 py-2.5 rounded-full transition">Open dashboard</a>';
+            if (nav) nav.innerHTML = '<a href="/index.html" class="btn-primary shadow-[0_0_15px_rgba(252,90,56,0.3)] text-sm font-semibold px-5 py-2.5 rounded-md">Dashboard</a>';
         }
     </script>
 </body>

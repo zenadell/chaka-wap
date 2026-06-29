@@ -3,99 +3,216 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Set up your assistant · Chaka</title>
+    <title>Set up your workspace · Chaka</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Poppins', 'sans-serif'] },
+                    fontFamily: { 
+                        sans: ['Inter', 'sans-serif'],
+                        heading: ['Manrope', 'sans-serif']
+                    },
                     colors: {
-                        base: '#18181A', card: '#222224', cardHover: '#2A2A2D',
-                        brandOrange: '#FC5A38', brandOrangeHover: '#E04A2A',
-                        textMuted: '#A1A1AA', borderMuted: '#333333'
+                        base: '#0B0B0E',
+                        card: '#121216',
+                        cardHover: '#18181D',
+                        brandOrange: '#FC5A38',
+                        textMuted: '#8F919E',
+                        borderMuted: '#222329'
                     }
                 }
             }
         }
     </script>
     <style>
-        body { background-color: #18181A; color: #FFFFFF; }
-        input, textarea { background-color: #18181A !important; border-color: #333333 !important; color: white !important; }
-        input:focus, textarea:focus { border-color: #FC5A38 !important; outline: none !important; box-shadow: 0 0 0 1px #FC5A38 !important; }
-        .type-card.selected { border-color: #FC5A38 !important; background-color: rgba(252,90,56,0.08) !important; }
-        .tone-chip.selected { background-color: #FC5A38 !important; color: #fff !important; border-color: #FC5A38 !important; }
+        body { background-color: #0B0B0E; color: #FFFFFF; }
+        
+        /* Typography */
+        h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.02em; }
+
+        /* Ambient Glow */
+        .ambient-light {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(252, 90, 56, 0.08) 0%, rgba(252, 90, 56, 0) 70%);
+            z-index: -2;
+            pointer-events: none;
+        }
+
+        /* Crisp Inputs */
+        input, textarea {
+            background-color: #0B0B0E !important;
+            border: 1px solid #222329 !important;
+            color: white !important;
+            transition: all 0.2s ease;
+        }
+        input:focus, textarea:focus {
+            border-color: #FC5A38 !important;
+            outline: none !important;
+            box-shadow: 0 0 0 1px #FC5A38 !important;
+            background-color: #121216 !important;
+        }
+        input::placeholder, textarea::placeholder {
+            color: #555968 !important;
+        }
+
+        /* Bento Cards */
+        .type-card {
+            background: #121216;
+            border: 1px solid #222329;
+            transition: all 0.2s ease;
+        }
+        .type-card:hover {
+            border-color: #3A3D47;
+            background: #15151A;
+            transform: translateY(-1px);
+        }
+        .type-card.selected {
+            border-color: #FC5A38;
+            background: #18181D;
+            box-shadow: inset 0 0 0 1px rgba(252,90,56,0.2);
+        }
+
+        .tone-chip {
+            background: #121216;
+            border: 1px solid #222329;
+            transition: all 0.2s ease;
+        }
+        .tone-chip:hover {
+            border-color: #3A3D47;
+            background: #18181D;
+        }
+        .tone-chip.selected { 
+            background-color: #FC5A38 !important; 
+            color: #fff !important; 
+            border-color: #FC5A38 !important; 
+            box-shadow: 0 0 15px rgba(252,90,56,0.3);
+        }
+
+        /* Steps */
         .step { display: none; }
-        .step.active { display: block; }
+        .step.active { display: block; animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Buttons */
+        .btn-primary {
+            background-color: #FC5A38;
+            color: #FFFFFF;
+            border: 1px solid #FC5A38;
+            box-shadow: 0 4px 14px 0 rgba(252, 90, 56, 0.39);
+            transition: all 0.2s ease;
+        }
+        .btn-primary:hover { 
+            background-color: #e54d2e; 
+            border-color: #e54d2e;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(252, 90, 56, 0.5);
+        }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; transform: none; }
+
+        .btn-secondary {
+            background-color: #121216;
+            color: #FFFFFF;
+            border: 1px solid #3A3D47;
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover { background-color: #18181D; border-color: #FC5A38; }
+
+        /* Navigation Grid Lines */
+        .bg-grid {
+            background-size: 50px 50px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            mask-image: radial-gradient(circle at center, black 0%, transparent 80%);
+            -webkit-mask-image: radial-gradient(circle at center, black 0%, transparent 80%);
+        }
     </style>
 </head>
-<body class="min-h-screen w-screen flex flex-col items-center justify-center p-4 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-card via-base to-base">
+<body class="min-h-screen w-screen flex flex-col items-center justify-center p-4 selection:bg-brandOrange/30 selection:text-white relative z-10">
 
-    <div class="mb-6 text-center">
-        <div class="w-14 h-14 bg-brandOrange/10 text-brandOrange rounded-2xl flex items-center justify-center text-2xl shadow-lg border border-brandOrange/20 mx-auto mb-3">
-            <i class="fas fa-robot"></i>
-        </div>
-        <h1 class="text-2xl font-bold tracking-tight">Let's set up your assistant</h1>
-        <p class="text-textMuted mt-1 text-sm">Tell us how you'll use Chaka so the AI replies the right way.</p>
-    </div>
+    <div class="ambient-light"></div>
+    <div class="absolute inset-0 bg-grid h-screen z-[-1] pointer-events-none"></div>
 
-    <div class="w-full max-w-2xl bg-card/80 backdrop-blur-xl border border-borderMuted/50 rounded-2xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
-        <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brandOrange to-yellow-500"></div>
-
-        <!-- Progress -->
-        <div class="flex items-center gap-2 mb-6">
-            <div id="bar1" class="h-1.5 flex-1 rounded-full bg-brandOrange transition-colors"></div>
-            <div id="bar2" class="h-1.5 flex-1 rounded-full bg-borderMuted transition-colors"></div>
-        </div>
-
-        <div id="errorAlert" class="hidden mb-5 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-start gap-3">
-            <i class="fas fa-exclamation-circle mt-0.5"></i>
-            <span id="errorText"></span>
-        </div>
-
-        <!-- STEP 1: account type -->
-        <div id="step1" class="step active">
-            <h2 class="text-base font-semibold mb-1">What will you use Chaka for?</h2>
-            <p class="text-textMuted text-xs mb-4">Pick the option that fits best — you can change this later.</p>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" id="typeGrid"></div>
-            <div class="flex justify-end mt-6">
-                <button id="toStep2" disabled class="px-5 py-2.5 rounded-xl bg-brandOrange text-white text-sm font-semibold hover:bg-brandOrangeHover transition disabled:opacity-40 disabled:cursor-not-allowed">
-                    Continue <i class="fas fa-arrow-right ml-1"></i>
-                </button>
+    <div class="w-full max-w-xl mx-auto relative">
+        <div class="mb-10 text-center">
+            <div class="w-12 h-12 bg-brandOrange text-white border border-[#FC5A38] shadow-[0_0_20px_rgba(252,90,56,0.4)] rounded-xl flex items-center justify-center mx-auto mb-6">
+                <i class="fas fa-robot text-lg"></i>
             </div>
+            <h1 class="text-3xl font-extrabold tracking-tight">Configure workspace</h1>
+            <p class="text-[#8F919E] mt-2 text-base">Let's set up your Chaka environment.</p>
         </div>
 
-        <!-- STEP 2: details -->
-        <div id="step2" class="step">
-            <h2 id="step2Title" class="text-base font-semibold mb-1">A few details</h2>
-            <p class="text-textMuted text-xs mb-4">This shapes your assistant's voice and goals.</p>
+        <div class="bg-[#121216]/80 backdrop-blur-xl border border-[#222329] rounded-2xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
+            <!-- decorative top glow inside modal -->
+            <div class="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-brandOrange/50 to-transparent"></div>
 
-            <div class="space-y-4">
-                <div class="space-y-1">
-                    <label id="nameLabel" class="text-[10px] text-textMuted font-medium uppercase tracking-wider pl-1">Name</label>
-                    <input type="text" id="businessName" maxlength="120" class="w-full px-4 py-3 rounded-xl border border-borderMuted text-sm" />
-                </div>
+            <!-- Progress -->
+            <div class="flex items-center gap-3 mb-10">
+                <div id="bar1" class="h-1.5 flex-1 rounded-full bg-brandOrange transition-colors duration-500 shadow-[0_0_10px_rgba(252,90,56,0.5)]"></div>
+                <div id="bar2" class="h-1.5 flex-1 rounded-full bg-[#222329] transition-colors duration-500"></div>
+            </div>
 
-                <div class="space-y-1">
-                    <label id="objectiveLabel" class="text-[10px] text-textMuted font-medium uppercase tracking-wider pl-1">What should it focus on?</label>
-                    <textarea id="objective" rows="3" maxlength="500" class="w-full px-4 py-3 rounded-xl border border-borderMuted text-sm resize-none"></textarea>
-                </div>
+            <div id="errorAlert" class="hidden mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-start gap-3">
+                <i class="fas fa-exclamation-circle mt-0.5"></i>
+                <span id="errorText"></span>
+            </div>
 
-                <div class="space-y-1">
-                    <label class="text-[10px] text-textMuted font-medium uppercase tracking-wider pl-1">Tone (optional)</label>
-                    <div class="flex flex-wrap gap-2" id="toneChips"></div>
+            <!-- STEP 1: account type -->
+            <div id="step1" class="step active">
+                <h2 class="text-lg font-bold mb-1 text-white">Select use case</h2>
+                <p class="text-[#8F919E] text-sm mb-6">Choose the primary goal for this workspace.</p>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4" id="typeGrid"></div>
+                
+                <div class="flex justify-end mt-10 pt-6">
+                    <button id="toStep2" disabled class="btn-primary px-7 py-3 rounded-md text-[15px] font-semibold w-full sm:w-auto">
+                        Continue
+                    </button>
                 </div>
             </div>
 
-            <div class="flex justify-between items-center mt-6">
-                <button id="backStep1" class="px-4 py-2.5 rounded-xl border border-borderMuted text-textMuted text-sm font-medium hover:text-white hover:border-white/40 transition">
-                    <i class="fas fa-arrow-left mr-1"></i> Back
-                </button>
-                <button id="finishBtn" class="px-5 py-2.5 rounded-xl bg-brandOrange text-white text-sm font-semibold hover:bg-brandOrangeHover transition">
-                    Finish setup <i class="fas fa-check ml-1"></i>
-                </button>
+            <!-- STEP 2: details -->
+            <div id="step2" class="step">
+                <h2 id="step2Title" class="text-lg font-bold mb-1 text-white">Workspace details</h2>
+                <p class="text-[#8F919E] text-sm mb-6">Configure the behavior of your agent.</p>
+
+                <div class="space-y-5">
+                    <div class="space-y-2">
+                        <label id="nameLabel" class="block text-[13px] font-bold text-white tracking-wide">Workspace Name</label>
+                        <input type="text" id="businessName" class="w-full px-4 py-3 rounded-lg text-base shadow-inner" />
+                    </div>
+
+                    <div class="space-y-2">
+                        <label id="objectiveLabel" class="block text-[13px] font-bold text-white tracking-wide">Primary Objective</label>
+                        <textarea id="objective" rows="3" class="w-full px-4 py-3 rounded-lg text-base resize-none shadow-inner"></textarea>
+                    </div>
+
+                    <div class="pt-2">
+                        <label class="block text-[13px] font-bold text-white tracking-wide mb-3">Voice & Tone <span class="text-[#555968] font-normal ml-1">(Optional)</span></label>
+                        <div class="flex flex-wrap gap-2.5" id="toneChips"></div>
+                    </div>
+                </div>
+
+                <div class="flex justify-between items-center mt-10 pt-6">
+                    <button id="backStep1" class="btn-secondary px-6 py-3 rounded-md text-[15px] font-semibold">
+                        Back
+                    </button>
+                    <button id="finishBtn" class="btn-primary px-7 py-3 rounded-md text-[15px] font-semibold">
+                        Complete Setup
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -105,20 +222,20 @@
         if (!token) window.location.href = '/login.html';
 
         const TYPES = {
-            business:   { icon: 'fa-store',        label: 'Business owner',     desc: 'Reply to customers, answer questions, take bookings.' },
-            personal:   { icon: 'fa-face-smile',   label: 'Personal / fun',     desc: 'Casual auto-replies for personal chats.' },
-            creator:    { icon: 'fa-star',         label: 'Creator / influencer', desc: 'Handle fan DMs and grow engagement.' },
-            freelancer: { icon: 'fa-briefcase',    label: 'Freelancer / solo',  desc: 'Client comms, scheduling and follow-ups.' }
+            business:   { icon: 'fa-store',        label: 'Business Operations', desc: 'Customer support, quoting, and bookings.' },
+            personal:   { icon: 'fa-user',         label: 'Personal Assistant',  desc: 'Automate replies for personal conversations.' },
+            creator:    { icon: 'fa-star',         label: 'Creator / Brand',     desc: 'Audience engagement and DM management.' },
+            freelancer: { icon: 'fa-briefcase',    label: 'Freelancer',          desc: 'Client communications and scheduling.' }
         };
 
         const COPY = {
-            business:   { nameLabel: 'Business name', namePh: 'e.g. Bella\'s Bakery', objLabel: 'What should your assistant help customers with?', objPh: 'e.g. Answer menu & price questions, take orders, share opening hours.' },
-            personal:   { nameLabel: 'Your name / nickname', namePh: 'e.g. Alex', objLabel: 'How should it sound when replying for you?', objPh: 'e.g. Chill and funny, keep my friends entertained when I\'m busy.' },
-            creator:    { nameLabel: 'Creator / brand name', namePh: 'e.g. @alexcreates', objLabel: 'What should it do with your fans?', objPh: 'e.g. Thank supporters, answer content questions, push my latest drop.' },
-            freelancer: { nameLabel: 'Your name or business', namePh: 'e.g. Alex Design Co.', objLabel: 'What client tasks should it handle?', objPh: 'e.g. Answer service questions, share availability, book discovery calls.' }
+            business:   { nameLabel: 'Business Name', namePh: 'e.g. Acme Corp', objLabel: 'Assistant Guidelines', objPh: 'e.g. Answer support queries and share pricing.' },
+            personal:   { nameLabel: 'Display Name', namePh: 'e.g. John Doe', objLabel: 'Assistant Guidelines', objPh: 'e.g. Keep replies short and casual.' },
+            creator:    { nameLabel: 'Brand Name', namePh: 'e.g. @johndoe', objLabel: 'Assistant Guidelines', objPh: 'e.g. Thank followers and share latest content.' },
+            freelancer: { nameLabel: 'Workspace Name', namePh: 'e.g. Design Studio', objLabel: 'Assistant Guidelines', objPh: 'e.g. Answer inquiries and provide Calendly link.' }
         };
 
-        const TONES = ['Friendly', 'Professional', 'Playful', 'Concise', 'Warm'];
+        const TONES = ['Professional', 'Friendly', 'Concise', 'Empathetic', 'Direct'];
 
         let selectedType = null;
         let selectedTone = '';
@@ -128,17 +245,25 @@
         Object.entries(TYPES).forEach(([key, t]) => {
             const el = document.createElement('button');
             el.type = 'button';
-            el.className = 'type-card text-left p-4 rounded-xl border border-borderMuted bg-base hover:bg-cardHover transition flex gap-3 items-start';
+            el.className = 'type-card text-left p-5 rounded-xl flex flex-col gap-4 group';
             el.innerHTML = `
-                <div class="w-9 h-9 shrink-0 rounded-lg bg-brandOrange/10 text-brandOrange flex items-center justify-center"><i class="fas ${t.icon}"></i></div>
+                <div class="w-10 h-10 rounded-lg border border-[#3A3D47] bg-[#18181D] text-[#8F919E] group-hover:text-brandOrange flex items-center justify-center transition-colors shadow-sm"><i class="fas ${t.icon} text-sm"></i></div>
                 <div>
-                    <div class="text-sm font-semibold">${t.label}</div>
-                    <div class="text-xs text-textMuted mt-0.5">${t.desc}</div>
+                    <div class="text-[15px] font-heading font-bold text-white mb-1.5">${t.label}</div>
+                    <div class="text-[13px] text-[#8F919E] leading-relaxed">${t.desc}</div>
                 </div>`;
             el.onclick = () => {
                 selectedType = key;
-                document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
+                document.querySelectorAll('.type-card').forEach(c => {
+                    c.classList.remove('selected');
+                    const iconWrap = c.querySelector('div:first-child');
+                    iconWrap.classList.remove('text-brandOrange', 'border-brandOrange');
+                    iconWrap.classList.add('text-[#8F919E]', 'border-[#3A3D47]');
+                });
                 el.classList.add('selected');
+                const iconWrap = el.querySelector('div:first-child');
+                iconWrap.classList.remove('text-[#8F919E]', 'border-[#3A3D47]');
+                iconWrap.classList.add('text-brandOrange', 'border-brandOrange');
                 document.getElementById('toStep2').disabled = false;
             };
             grid.appendChild(el);
@@ -149,7 +274,7 @@
         TONES.forEach(tone => {
             const chip = document.createElement('button');
             chip.type = 'button';
-            chip.className = 'tone-chip px-3 py-1.5 rounded-full border border-borderMuted text-xs text-textMuted hover:text-white transition';
+            chip.className = 'tone-chip px-4 py-2 rounded-lg text-[13px] font-semibold text-[#8F919E] hover:text-white';
             chip.textContent = tone;
             chip.onclick = () => {
                 if (selectedTone === tone) {
@@ -173,7 +298,7 @@
         function goStep(n) {
             document.getElementById('step1').classList.toggle('active', n === 1);
             document.getElementById('step2').classList.toggle('active', n === 2);
-            document.getElementById('bar2').className = 'h-1.5 flex-1 rounded-full transition-colors ' + (n === 2 ? 'bg-brandOrange' : 'bg-borderMuted');
+            document.getElementById('bar2').className = 'h-1.5 flex-1 rounded-full transition-all duration-500 ' + (n === 2 ? 'bg-brandOrange shadow-[0_0_10px_rgba(252,90,56,0.5)]' : 'bg-[#222329]');
         }
 
         document.getElementById('toStep2').onclick = () => {
@@ -183,7 +308,7 @@
             document.getElementById('businessName').placeholder = c.namePh;
             document.getElementById('objectiveLabel').textContent = c.objLabel;
             document.getElementById('objective').placeholder = c.objPh;
-            document.getElementById('step2Title').textContent = TYPES[selectedType].label + ' — a few details';
+            document.getElementById('step2Title').textContent = TYPES[selectedType].label + ' Setup';
             clearError();
             goStep(2);
         };
@@ -194,7 +319,7 @@
             clearError();
             btn.disabled = true;
             const original = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Saving...';
             try {
                 const res = await fetch('/api/onboarding', {
                     method: 'POST',
@@ -211,12 +336,12 @@
                     window.location.href = '/index.html';
                 } else {
                     if (res.status === 401) { window.location.href = '/login.html'; return; }
-                    showError(data.error || 'Something went wrong.');
+                    showError(data.error || 'Failed to complete setup.');
                     btn.disabled = false;
                     btn.innerHTML = original;
                 }
             } catch (err) {
-                showError('Network error. Please try again.');
+                showError('Network error. Please verify your connection.');
                 btn.disabled = false;
                 btn.innerHTML = original;
             }

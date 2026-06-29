@@ -1,5 +1,5 @@
 # fly.toml app configuration file
-app = "chaka-wap"
+app = "chaka-wap-bot"
 primary_region = "lhr"
 
 [http_service]
