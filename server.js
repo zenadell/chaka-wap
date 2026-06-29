@@ -124,6 +124,21 @@ initGlobalState();
 let localEmbedder = null; // Holds the local AI model
 const AI_REPLY_TRACKER = new Map(); // Tracks last responded message ID per contact
 const BURST_TRACKER = new Map(); // contactId -> [{ts, tokens}]
+// Texts the bot just sent, so we can tag WhatsApp's fromMe echoes as 'BOT' and keep them
+// OUT of the writing-style samples (otherwise the bot learns from its own replies = a
+// repetition feedback loop).
+const RECENT_BOT_TEXTS = new Map(); // `${sessionId}_${contactId}` -> [{text, ts}]
+function noteBotSentText(sessionId, contactId, text) {
+    const key = `${sessionId}_${contactId}`;
+    const arr = (RECENT_BOT_TEXTS.get(key) || []).filter(x => Date.now() - x.ts < 300000);
+    arr.push({ text: (text || '').trim(), ts: Date.now() });
+    RECENT_BOT_TEXTS.set(key, arr.slice(-25));
+}
+function isBotSentText(sessionId, contactId, text) {
+    const t = (text || '').trim();
+    if (!t) return false;
+    return (RECENT_BOT_TEXTS.get(`${sessionId}_${contactId}`) || []).some(x => x.text === t);
+}
 const SPEND_TRACKER = new Map(); // sessionId -> [{minute, tokens}]
 const RECONNECT_ATTEMPTS = new Map(); // sessionId -> count
 
@@ -1727,7 +1742,8 @@ async function saveMessageToDB(userId, sessionId, msg, forceSkipEmbedding = fals
             INSERT OR REPLACE INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me, embedding)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
-            msgId, sessionId, cleanId, userId, dbText, msg.key.fromMe ? MY_NAME : contactName,
+            msgId, sessionId, cleanId, userId, dbText,
+            msg.key.fromMe ? (isBotSentText(sessionId, cleanId, content.text) ? 'BOT' : MY_NAME) : contactName,
             safeTs, new Date(safeTs * 1000).toISOString(), msg.key.fromMe ? 1 : 0, isDuplicate ? (existing.embedding || null) : vector
         ]);
 
@@ -2167,7 +2183,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         if (includeStyle && !isProfessional) {
             const styleSamples = await fetchUserStyleSamples(userId, sessionId, contactId);
             if (styleSamples) {
-                styleContext = `[YOUR TEXTING STYLE FOR REFERENCE]\n${styleSamples}\n\n`;
+                styleContext = `[STYLE REFERENCE — imitate the VIBE only: how you capitalise, slang, emoji habits, message length. These are NOT scripts. Do NOT reuse their words or send any of these lines back. Write a fresh reply.]\n${styleSamples}\n\n`;
             }
         }
 
@@ -2233,7 +2249,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
         const rulesBlock = isProfessional
             ? `[RULES]\n- Always keep the role, voice, and tone described above. Never slip into slang, text-speak, or all-lowercase "lazy" texting, even if the other person does.\n- Be professional, warm, and genuinely helpful. Use correct grammar, spelling, and capitalization.\n- Keep replies concise (1-3 sentences) but complete — actually answer what was asked.\n- NEVER invent or assume business details — products, prices, services, stock, availability, hours, address, delivery, ordering or booking systems, discounts, or policies. Only state what's in your instructions above. If you weren't told it, you don't offer it.\n- Do NOT proactively pitch orders, bookings, or services. Let the person say what they need; if it's something you have no info on, offer to take their details for the owner to follow up.\n- If you don't know a specific detail, say you'll check rather than guessing or making it up.\n- Reply with ONE message only. Never repeat yourself or echo earlier phrases verbatim.\n- Light, fitting emoji use is okay; don't overdo it.\n${scheduleRule}\n${agentActions}`
-            : `[RULES]\n- Reply with ONE single message only. NEVER repeat yourself.\n- Keep replies extremely short, lazy, and conversational (1-2 lines max).\n- DO NOT act like an AI or an eager assistant. Be a normal human texting.\n- STOP asking follow-up questions constantly. Only ask a question if completely necessary to continue the exact topic.\n- DO NOT use perfect grammar, punctuation, or capitalization unless the user does.\n- MATCH THE EXACT STYLE AND VIBE OF THE PROVIDED STYLE SAMPLES.\n- ONLY use emojis if they perfectly match the user's current tone and style samples. Do not overuse them.\n- NEVER repeat any phrase from the conversation history verbatim.\n- If you don't know something, say so briefly. Don't make things up.\n${scheduleRule}`;
+            : `[RULES]\n- FIRST, actually read their last message and respond to THAT specifically. Your reply must make sense as a direct answer to what they just said — not a generic greeting.\n- Match the WRITING STYLE of the style reference (casual lowercase, slang, emoji habits) — but NEVER copy its words or send back any line from it. Generate fresh wording every time.\n- VARY your replies. Never send the same thing twice or recycle a phrase you already used in this chat (e.g. don't keep saying "just chillin wbu"). If you already said something, say something different.\n- Keep it short and human (1-2 lines), like a real person texting a friend. No AI/assistant vibes.\n- Don't address them by a name unless they told you their name in this conversation.\n- Move the conversation forward: react to what they said, then optionally add a thought — don't just bounce the same question back.\n- Light emoji use only when it fits. If you genuinely have nothing to add, a short natural reply is fine.\n- If you don't know something, say so briefly. Don't make things up.\n${scheduleRule}`;
 
         let systemInstruction = `[CURRENT TIME: ${new Date().toISOString()}]\n[IDENTITY] ${CORE_IDENTITY}\n\n${personaHeader}${kbContext}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}\n\n${rulesBlock}`;
 
@@ -2752,6 +2768,7 @@ async function startSession(userId, sessionId) {
                     await sock.sendPresenceUpdate('composing', jid);
                     await delay(1500);
                     await sock.sendMessage(jid, { text: replyText });
+                    noteBotSentText(sessionId, cleanId, replyText); // keep this out of style samples
 
                     // SAVE BOT REPLY
                     const botId = 'BOT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
