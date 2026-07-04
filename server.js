@@ -2487,6 +2487,13 @@ async function startSession(userId, sessionId, pairingPhone = null) {
     const phonebook = {};
     const logger = require('pino')({ level: 'silent' });
 
+    // Phone-number pairing sends companion_platform_id = getPlatformId(browser[1]).
+    // 'Desktop' → DESKTOP(7) is the NATIVE desktop-app platform and WhatsApp rejects it
+    // for web-style code pairing ("Couldn't link device"). A browser identity like
+    // 'Chrome' → CHROME(1) is the web companion WhatsApp expects. QR pairing is unaffected,
+    // so we only switch identity when a pairing phone is present.
+    const browserId = pairingPhone ? Browsers.ubuntu('Chrome') : Browsers.macOS('Desktop');
+
     const sock = makeWASocket({
         version,
         auth: {
@@ -2495,8 +2502,8 @@ async function startSession(userId, sessionId, pairingPhone = null) {
         },
         logger,
         printQRInTerminal: false,
-        syncFullHistory: false, 
-        browser: Browsers.macOS('Desktop'),
+        syncFullHistory: false,
+        browser: browserId,
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: false,
         connectTimeoutMs: 180000,
