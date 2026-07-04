@@ -2448,7 +2448,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
     }
 }
 
-async function startSession(userId, sessionId, pairingPhone = null) {
+async function startSession(userId, sessionId) {
     const globalId = `${userId}_${sessionId}`;
 
     // Safety guard for malformed IDs
@@ -2489,10 +2489,11 @@ async function startSession(userId, sessionId, pairingPhone = null) {
 
     // Phone-number pairing sends companion_platform_id = getPlatformId(browser[1]).
     // 'Desktop' → DESKTOP(7) is the NATIVE desktop-app platform and WhatsApp rejects it
-    // for web-style code pairing ("Couldn't link device"). A browser identity like
-    // 'Chrome' → CHROME(1) is the web companion WhatsApp expects. QR pairing is unaffected,
-    // so we only switch identity when a pairing phone is present.
-    const browserId = pairingPhone ? Browsers.ubuntu('Chrome') : Browsers.macOS('Desktop');
+    // for web-style code pairing ("Couldn't link device"). 'Chrome' → CHROME(1) is the web
+    // companion WhatsApp expects. QR pairing works with either, so we give every UNLINKED
+    // node a Chrome identity — that lets us issue a pairing code on the LIVE socket (no
+    // disruptive teardown). Already-registered nodes don't re-register, so it's moot for them.
+    const browserId = state.creds.registered ? Browsers.macOS('Desktop') : Browsers.ubuntu('Chrome');
 
     const sock = makeWASocket({
         version,
@@ -2515,10 +2516,6 @@ async function startSession(userId, sessionId, pairingPhone = null) {
     sessions.get(globalId).sock = sock;
     sessions.get(globalId).store = store;
     sessions.get(globalId).phonebook = phonebook;
-    // One-device linking: if a phone was supplied, we'll request a pairing code on this
-    // fresh socket's first QR event (see connection.update) — exactly once.
-    sessions.get(globalId).pairingPhone = pairingPhone;
-    sessions.get(globalId).pairingRequested = false;
 
     // --- CONNECTION WATCHDOG --- (Ensures we don't hang in 'connecting' forever)
     if (sessions.get(globalId).handshakeTimer) clearTimeout(sessions.get(globalId).handshakeTimer);
@@ -2543,30 +2540,14 @@ async function startSession(userId, sessionId, pairingPhone = null) {
         }
 
         if (qr) {
-            if (session) session.connectionState = 'qr_ready';
-            // ONE-DEVICE LINKING: the first QR means the socket is open and can send
-            // nodes — the correct (and only reliable) moment to request a pairing code.
-            // Requesting on a long-lived, QR-rotating socket is what caused WhatsApp's
-            // "Couldn't link device" error. We do it once per fresh socket.
-            if (session && session.pairingPhone && !session.pairingRequested && !sock.authState?.creds?.registered) {
-                session.pairingRequested = true;
-                sock.requestPairingCode(session.pairingPhone).then(code => {
-                    const pretty = code && code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
-                    io.emit('pairing_code', { sessionId, code: pretty });
-                    io.emit('log', { sessionId, msg: `🔗 Pairing code issued — enter it in WhatsApp now.` });
-                }).catch(err => {
-                    console.error(`[${globalId}] Pairing code error:`, err.message);
-                    // Fall back to QR mode; user can tap "Get code" again to retry fresh.
-                    session.pairingPhone = null;
-                    session.pairingRequested = false;
-                    io.emit('pairing_code', { sessionId, error: 'Could not generate a code — tap "Get code" again.' });
-                });
-                return; // in pairing mode, don't also push the QR image
+            if (session) {
+                session.connectionState = 'qr_ready';
+                // The QR event means the socket is open and past the noise handshake — i.e.
+                // ready to issue a pairing code on demand. Remember the live QR ref so the
+                // pairing handler knows the socket can pair right now (no teardown needed).
+                session.canPair = true;
             }
-            // In pairing mode we never show a QR — later QR rotations would confuse the user.
-            if (!session.pairingPhone) {
-                qrcode.toDataURL(qr, (err, url) => io.emit('qr_code', { sessionId, qr: url }));
-            }
+            qrcode.toDataURL(qr, (err, url) => io.emit('qr_code', { sessionId, qr: url }));
         }
 
         if (connection === 'close') {
@@ -3007,13 +2988,14 @@ io.on('connection', (socket) => {
     });
 
     // --- ONE-DEVICE LINKING: pairing code instead of QR ---
-    // Rides on the existing QR-stage socket (the exact state Baileys needs), so the
-    // session lifecycle is untouched. User types the code into WhatsApp on the SAME
-    // phone: Settings → Linked Devices → Link a Device → "Link with phone number instead".
+    // Requested on the LIVE, already-open socket (which carries a Chrome web-companion
+    // identity for unlinked nodes) — no teardown, so the QR screen never collapses. The
+    // user types the code into WhatsApp on the SAME phone: Settings → Linked Devices →
+    // Link a Device → "Link with phone number instead".
     socket.on('request_pairing_code', async (data) => {
         if (!userId || !data?.sessionId || !data?.phone) return;
         const globalId = `${userId}_${data.sessionId}`;
-        const existing = sessions.get(globalId);
+        const session = sessions.get(globalId);
         const fail = (error) => socket.emit('pairing_code', { sessionId: data.sessionId, error });
         try {
             // Normalize: digits only; drop international 00 prefix; reject junk early.
@@ -3025,34 +3007,31 @@ io.on('connection', (socket) => {
             if (phone.startsWith('0')) {
                 return fail('That looks like a local number. Start with your country code (e.g. 234... not 0...).');
             }
-            if (existing?.sock?.authState?.creds?.registered) {
+            if (!session || !session.sock) {
+                return fail('Node is not running. Start it first, then request a code.');
+            }
+            if (session.sock.authState?.creds?.registered) {
                 return fail('This node is already linked to a WhatsApp account.');
             }
-            // Rate-limit: one request per 20s per node.
+            // The socket must be past the handshake (QR shown at least once) to accept the
+            // pairing request. If it isn't ready yet, ask the user to wait a moment.
+            if (!session.canPair) {
+                return fail('Still connecting — wait for the QR to appear, then tap "Get code".');
+            }
+            // Rate-limit: one request per 15s per node (WhatsApp throttles rapid requests).
             const now = Date.now();
-            if (existing?.lastPairingReq && now - existing.lastPairingReq < 20000) {
+            if (session.lastPairingReq && now - session.lastPairingReq < 15000) {
                 return fail('Please wait a few seconds before requesting another code.');
             }
+            session.lastPairingReq = now;
 
-            // A pairing code MUST be requested on a fresh, just-opened socket — requesting
-            // on a QR-rotating socket triggers WhatsApp's "Couldn't link device". So we tear
-            // the current socket down and start a clean one in pairing mode; the code is then
-            // issued on its first QR event (see connection.update).
-            if (existing) {
-                try { if (existing.handshakeTimer) clearTimeout(existing.handshakeTimer); } catch (e) {}
-                try { if (existing.watchdogTimer) clearInterval(existing.watchdogTimer); } catch (e) {}
-                try { if (existing.sock) existing.sock.end(undefined); } catch (e) {}
-                sessions.delete(globalId);
-            }
-            io.emit('log', { sessionId: data.sessionId, msg: `🔗 Generating pairing code…` });
-            setTimeout(() => {
-                startSession(userId, data.sessionId, phone);
-                const s = sessions.get(globalId);
-                if (s) s.lastPairingReq = Date.now();
-            }, 800);
+            const code = await session.sock.requestPairingCode(phone);
+            const pretty = code && code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+            socket.emit('pairing_code', { sessionId: data.sessionId, code: pretty });
+            io.emit('log', { sessionId: data.sessionId, msg: `🔗 Pairing code issued — enter it in WhatsApp now.` });
         } catch (e) {
             console.error(`[${globalId}] Pairing code error:`, e.message);
-            fail('Could not generate a code — try again in a moment.');
+            fail('Could not generate a code — make sure the node is running, then try again.');
         }
     });
 

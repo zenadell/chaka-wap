@@ -1168,13 +1168,13 @@
             if (!phone) { errEl.textContent = 'Enter your WhatsApp number first.'; errEl.classList.remove('hidden'); return; }
             const btn = document.getElementById('pairing-btn');
             btn.disabled = true; btn.textContent = 'Generating…';
-            // Requesting a code restarts the node on a fresh socket, so the code takes a few
-            // seconds to arrive. Show a placeholder and clear any old (now-invalid) code.
+            // Code is issued on the live socket (~1s). Show a placeholder meanwhile and clear
+            // any old (now-invalid) code. Safety re-enable in case the reply is lost.
             const result = document.getElementById('pairing-result');
             const codeEl = document.getElementById('pairing-code');
             result.classList.remove('hidden');
             codeEl.innerHTML = '<span class="text-lg text-textMuted tracking-normal font-sans">Generating code…</span>';
-            setTimeout(() => { btn.disabled = false; btn.textContent = 'Get code'; }, 10000);
+            setTimeout(() => { if (btn.textContent === 'Generating…') { btn.disabled = false; btn.textContent = 'Get code'; } }, 8000);
             socket.emit('request_pairing_code', { sessionId: activeSessionId, phone });
         }
         socket.on('pairing_code', (d) => {
