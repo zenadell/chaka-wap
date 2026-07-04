@@ -24,7 +24,16 @@ primary_region = "iad"
   source = "chaka_data"
   destination = "/app/data"
 
+# 256MB OOM-killed Node mid-reply during the WhatsApp history-sync that fires on a
+# fresh device link. 1GB gives comfortable headroom for history syncs + up to 4
+# concurrent sessions. Pinned here so deploys never silently reset the machine size.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
 [env]
   NODE_ENV = "production"
   PORT = "3000"
   ACTIVE_API = "deepseek"
+  # Cap V8 heap below the container limit so GC kicks in before the kernel OOM-kills us.
+  NODE_OPTIONS = "--max-old-space-size=768"

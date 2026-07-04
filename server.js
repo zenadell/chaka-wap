@@ -1281,15 +1281,9 @@ app.post('/api/onboarding', authenticateToken, async (req, res) => {
         // Generate the tailored AI persona and store it as the user's global custom_prompt,
         // which orchestrateAIResponse() already consumes for every auto-reply.
         const persona = buildPersonaPrompt({ account_type, business_name, objective, tone, display_name });
-        const existing = await db.get(`SELECT id FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-        if (existing) {
-            await db.run(`UPDATE global_settings SET custom_prompt = ? WHERE id = 'settings' AND user_id = ?`, [persona, userId]);
-        } else {
-            await db.run(
-                `INSERT INTO global_settings (id, user_id, custom_prompt, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, ?, 1, 'deepseek', 'chaka-medium')`,
-                [userId, persona]
-            );
-        }
+        // Idempotent (race-safe): create a default row if missing, then set the persona.
+        await db.run(`INSERT OR IGNORE INTO global_settings (id, user_id, custom_prompt, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, '', 1, 'deepseek', 'chaka-medium')`, [userId]);
+        await db.run(`UPDATE global_settings SET custom_prompt = ? WHERE id = 'settings' AND user_id = ?`, [persona, userId]);
 
         res.json({ ok: true, account_type, persona });
     } catch (e) {
@@ -3067,19 +3061,20 @@ io.on('connection', (socket) => {
 
     socket.on('update_config', async (data) => {
         if (!userId || !data.updates) return;
-        const { globalPrompt, masterAutoReply, aiEngine, chakaModel } = data.updates;
-        
-        const existing = await db.get(`SELECT id FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
-        if (!existing) {
-            await db.run(`INSERT INTO global_settings (id, user_id, custom_prompt, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, ?, ?, ?, ?)`,
-                [userId, globalPrompt || '', masterAutoReply === false ? 0 : 1, aiEngine || 'deepseek', chakaModel || 'chaka-medium']);
-        } else {
+        try {
+            const { globalPrompt, masterAutoReply, aiEngine, chakaModel } = data.updates;
+            // Idempotent: ensure a settings row exists without a check-then-insert race
+            // (two concurrent update_config events used to both INSERT → UNIQUE constraint
+            // crash as an unhandled rejection). INSERT OR IGNORE + UPDATEs is race-safe.
+            await db.run(`INSERT OR IGNORE INTO global_settings (id, user_id, custom_prompt, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, '', 1, 'deepseek', 'chaka-medium')`, [userId]);
             if (globalPrompt !== undefined) await db.run(`UPDATE global_settings SET custom_prompt = ? WHERE id = 'settings' AND user_id = ?`, [globalPrompt, userId]);
             if (masterAutoReply !== undefined) await db.run(`UPDATE global_settings SET master_auto_reply = ? WHERE id = 'settings' AND user_id = ?`, [masterAutoReply ? 1 : 0, userId]);
             if (aiEngine !== undefined) await db.run(`UPDATE global_settings SET active_api = ? WHERE id = 'settings' AND user_id = ?`, [aiEngine, userId]);
             if (chakaModel !== undefined) await db.run(`UPDATE global_settings SET chaka_model = ? WHERE id = 'settings' AND user_id = ?`, [chakaModel, userId]);
+            socket.emit('log', { sessionId: data.sessionId, msg: `⚙️ Global Config Updated` });
+        } catch (e) {
+            console.error('update_config error:', e.message);
         }
-        socket.emit('log', { sessionId: data.sessionId, msg: `⚙️ Global Config Updated` });
     });
 
     socket.on('get_contacts', async (sessionId) => {
