@@ -207,6 +207,14 @@ async function initDB() {
         driver: sqlite3.Database
     });
 
+    // --- DURABILITY: WAL journaling survives crashes without corruption, allows
+    // concurrent reads during writes, and busy_timeout stops "database is locked"
+    // errors under load. synchronous=NORMAL is the recommended pairing with WAL.
+    await db.exec(`PRAGMA journal_mode = WAL;`);
+    await db.exec(`PRAGMA synchronous = NORMAL;`);
+    await db.exec(`PRAGMA busy_timeout = 10000;`);
+    await db.exec(`PRAGMA wal_autocheckpoint = 500;`);
+
     await db.exec(`
         -- Multi-Tenant Core Tables
         CREATE TABLE IF NOT EXISTS users (
@@ -327,6 +335,15 @@ async function initDB() {
             type TEXT DEFAULT 'handoff', -- handoff | lead | order | system
             message TEXT,
             handled INTEGER DEFAULT 0,
+            created_at INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS reply_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            session_id TEXT,
+            contact_id TEXT,
+            bot_text TEXT,      -- what the AI last said in that chat
+            owner_text TEXT,    -- what the human owner actually wrote right after
             created_at INTEGER
         );
     `);
@@ -614,7 +631,7 @@ async function generateChakaResponse(userId, prompt, modelOverride = null) {
 }
 
 // --- DEEPSEEK LLM INTEGRATION (PRIMARY — direct paid API) ---
-async function tryDeepSeekFailover(userId, sessionId, systemPrompt, userPrompt) {
+async function tryDeepSeekFailover(userId, sessionId, systemPrompt, userPrompt, opts = {}) {
     if (!DEEPSEEK_API_KEY) {
         console.warn(`[${sessionId}] ⚠️ DEEPSEEK_API_KEY missing — skipping DeepSeek.`);
         return null;
@@ -641,6 +658,9 @@ async function tryDeepSeekFailover(userId, sessionId, systemPrompt, userPrompt) 
                         { role: 'user', content: userPrompt }
                     ],
                     max_tokens: 500,
+                    // DeepSeek recommends ~1.3 for natural conversation; callers pass
+                    // 1.3 for casual accounts, 1.0 for professional (less improvisation).
+                    temperature: typeof opts.temperature === 'number' ? opts.temperature : 1.0,
                     stream: false
                 }),
                 signal: controller.signal
@@ -818,21 +838,22 @@ async function generateQwenResponse(systemPrompt, userPrompt) {
     });
 }
 
-async function orchestrateAIResponse(userId, sessionId, systemPrompt, userPrompt) {
-    let attempts = 0;
-
+async function orchestrateAIResponse(userId, sessionId, systemPrompt, userPrompt, opts = {}) {
     const row = await db.get(`SELECT active_api FROM global_settings WHERE id = 'settings' AND user_id = ?`, [userId]);
     const activeApi = (row && row.active_api) ? row.active_api : 'deepseek';
 
-    while (true) {
-        attempts++;
-        console.log(`[${sessionId}] 🛰️ AI Orchestrator: Try #${attempts}`);
+    // Bounded retry: 2 full rounds through the provider chain, then give up gracefully.
+    // (The old while(true) could hold one message hostage forever and starve the queue —
+    // WhatsApp redelivers on reconnect anyway, and the caller notifies the owner on failure.)
+    const MAX_ROUNDS = 2;
+    for (let attempts = 1; attempts <= MAX_ROUNDS; attempts++) {
+        console.log(`[${sessionId}] 🛰️ AI Orchestrator: Try #${attempts}/${MAX_ROUNDS}`);
 
         try {
             if (activeApi === 'deepseek') {
                 // DEEPSEEK (direct paid API): primary engine (with its own retries).
                 // Fallback chain: DeepSeek → OpenRouter → Gemini (Chaka removed — endpoint is down/400).
-                const result = await tryDeepSeekFailover(userId, sessionId, systemPrompt, userPrompt);
+                const result = await tryDeepSeekFailover(userId, sessionId, systemPrompt, userPrompt, opts);
                 if (result) return result;
 
                 console.warn(`[${sessionId}] DeepSeek failed, falling back to OpenRouter...`);
@@ -889,15 +910,18 @@ async function orchestrateAIResponse(userId, sessionId, systemPrompt, userPrompt
                 if (geminiResult) return geminiResult;
             }
 
-            // If we are here, EVERYTHING failed.
-            console.warn(`[${sessionId}] 🚨 CRITICAL: All providers/models failed. Entering 2-minute cooldown...`);
-            io.emit('log', { sessionId, msg: "🚨 All AI systems exhausted. Cooling down for 2 mins..." });
-            await delay(120000); // 2 minute cooldown
+            // Round exhausted — brief pause before the final retry round.
+            console.warn(`[${sessionId}] ⚠️ All providers failed on round ${attempts}/${MAX_ROUNDS}.`);
+            if (attempts < MAX_ROUNDS) await delay(8000);
         } catch (e) {
             console.error("Orchestrator Loop Error:", e);
-            await delay(5000);
+            if (attempts < MAX_ROUNDS) await delay(5000);
         }
     }
+
+    console.error(`[${sessionId}] 🚨 AI exhausted all rounds — giving up on this message (owner will be notified).`);
+    io.emit('log', { sessionId, msg: "🚨 AI couldn't generate a reply after all retries." });
+    return null;
 }
 
 async function tryQwenFailover(userId, sessionId, systemPrompt, userPrompt) {
@@ -2231,6 +2255,24 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             }
         } catch (e) { /* KB fetch failed — fall back to grounding rules */ }
 
+        // --- LEARNING: owner corrections (highest-value signal we have) ---
+        // When the human owner stepped into a chat after the AI replied, their message
+        // is ground truth. Show the model the most recent examples so it converges on
+        // how the owner actually talks and handles situations — this contact first,
+        // then account-wide.
+        let learnContext = '';
+        try {
+            const lessons = await db.all(
+                `SELECT bot_text, owner_text FROM reply_feedback WHERE user_id = ?
+                 ORDER BY (contact_id = ?) DESC, created_at DESC LIMIT 3`,
+                [userId, contactId]);
+            if (lessons.length) {
+                const lines = lessons.map(l =>
+                    `- You said: "${(l.bot_text || '').slice(0, 140)}" → your owner then stepped in and wrote: "${(l.owner_text || '').slice(0, 140)}"`).join('\n');
+                learnContext = `\n\n[LEARNED FROM YOUR OWNER — when they stepped into chats, this is how THEY handled it. Match their judgment, tone and wording style (do not copy verbatim):\n${lines}]`;
+            }
+        } catch (e) { /* learning injection is best-effort */ }
+
         const scheduleRule = `- If the user asks you to remind them or someone else to do something later, output exactly: [SCHEDULE_MESSAGE: <YYYY-MM-DDTHH:MM:SSZ> | <ContactName OR "CURRENT"> | <The reminder message to send later>]. Use "CURRENT" if it's for the person you are currently talking to. Also include a brief immediate text acknowledging the schedule.`;
 
         // Agent actions: hidden control tags the assistant appends AFTER its normal reply.
@@ -2251,7 +2293,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             ? `[RULES]\n- Always keep the role, voice, and tone described above. Never slip into slang, text-speak, or all-lowercase "lazy" texting, even if the other person does.\n- Be professional, warm, and genuinely helpful. Use correct grammar, spelling, and capitalization.\n- Keep replies concise (1-3 sentences) but complete — actually answer what was asked.\n- NEVER invent or assume business details — products, prices, services, stock, availability, hours, address, delivery, ordering or booking systems, discounts, or policies. Only state what's in your instructions above. If you weren't told it, you don't offer it.\n- Do NOT proactively pitch orders, bookings, or services. Let the person say what they need; if it's something you have no info on, offer to take their details for the owner to follow up.\n- If you don't know a specific detail, say you'll check rather than guessing or making it up.\n- Reply with ONE message only. Never repeat yourself or echo earlier phrases verbatim.\n- Light, fitting emoji use is okay; don't overdo it.\n${scheduleRule}\n${agentActions}`
             : `[RULES]\n- FIRST, actually read their last message and respond to THAT specifically. Your reply must make sense as a direct answer to what they just said — not a generic greeting.\n- Match the WRITING STYLE of the style reference (casual lowercase, slang, emoji habits) — but NEVER copy its words or send back any line from it. Generate fresh wording every time.\n- VARY your replies. Never send the same thing twice or recycle a phrase you already used in this chat (e.g. don't keep saying "just chillin wbu"). If you already said something, say something different.\n- Keep it short and human (1-2 lines), like a real person texting a friend. No AI/assistant vibes.\n- Don't address them by a name unless they told you their name in this conversation.\n- Move the conversation forward: react to what they said, then optionally add a thought — don't just bounce the same question back.\n- Light emoji use only when it fits. If you genuinely have nothing to add, a short natural reply is fine.\n- If you don't know something, say so briefly. Don't make things up.\n${scheduleRule}`;
 
-        let systemInstruction = `[CURRENT TIME: ${new Date().toISOString()}]\n[IDENTITY] ${CORE_IDENTITY}\n\n${personaHeader}${kbContext}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}\n\n${rulesBlock}`;
+        let systemInstruction = `[CURRENT TIME: ${new Date().toISOString()}]\n[IDENTITY] ${CORE_IDENTITY}\n\n${personaHeader}${kbContext}${learnContext}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}\n\n${rulesBlock}`;
 
         // ── BUILD FINAL PROMPT (token-efficient format) ──
         let userPrompt = '';
@@ -2280,10 +2322,19 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         console.log(`[${sessionId}] 📤 GENERATING RESPONSE (System: ${systemInstruction.length}, User: ${userPrompt.length})`);
 
         const startTime = Date.now();
-        let replyText = await orchestrateAIResponse(userId, globalId, systemInstruction, userPrompt);
+        // Casual accounts get a warmer temperature (DeepSeek's own guidance for
+        // conversation is ~1.3); professional stays precise at 1.0.
+        let replyText = await orchestrateAIResponse(userId, globalId, systemInstruction, userPrompt, { temperature: isProfessional ? 1.0 : 1.3 });
 
         if (!replyText) {
             console.error(`[${globalId}] 🔥 Orchestrator returned null after all retries.`);
+            // Surface the failure to the owner instead of failing silently — this chat
+            // needs a human until the AI is reachable again.
+            try {
+                await db.run(`INSERT INTO notifications (user_id, session_id, contact_id, contact_name, type, message, created_at) VALUES (?,?,?,?,?,?,?)`,
+                    [userId, sessionId, contactId, contactName, 'system', `AI couldn't reply to ${contactName} (provider unreachable). They may be waiting on you.`, Math.floor(Date.now() / 1000)]);
+                io.emit('notification', { sessionId, contactId, contactName, type: 'system', message: `AI couldn't reply to ${contactName} — tap in.`, timestamp: Date.now() });
+            } catch (e) { /* notification best-effort */ }
             return null;
         }
 
@@ -2449,6 +2500,10 @@ async function startSession(userId, sessionId) {
             if (session) {
                 session.isConnected = false;
                 if (session.watchdogTimer) clearInterval(session.watchdogTimer);
+                // Also clear the 60s handshake timer — otherwise it can fire AFTER this
+                // close handler already scheduled a reconnect, delete the session mid-boot
+                // and double-schedule startSession (the old "reconnect storm").
+                if (session.handshakeTimer) clearTimeout(session.handshakeTimer);
             }
 
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
@@ -2558,6 +2613,7 @@ async function startSession(userId, sessionId) {
         }
 
         for (const msg of messages) {
+            try { // per-message isolation: one bad message must never kill the rest of the batch
             const jidRaw = msg.key.remoteJid || '';
 
             // EXPLICIT GROUP/BROADCAST FILTER
@@ -2575,6 +2631,25 @@ async function startSession(userId, sessionId) {
 
             // Only trigger AI reply for incoming messages
             if (msg.key.fromMe) {
+                // LEARNING LOOP: if the OWNER (not the bot) typed this, and the bot had
+                // recently replied in the same chat, treat it as a correction/example —
+                // the human stepped in, so their words are ground truth for how this
+                // conversation should have been handled. Fed back into future prompts.
+                try {
+                    const selfText = (savedData?.content?.text || '').trim();
+                    const selfCleanId = savedData?.cleanId;
+                    if (selfText && selfCleanId && !selfText.startsWith('[') && !isBotSentText(sessionId, selfCleanId, selfText)) {
+                        const lastBot = await db.get(
+                            `SELECT text, timestamp FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ?
+                             AND message_id LIKE 'BOT_%' ORDER BY timestamp DESC LIMIT 1`,
+                            [sessionId, selfCleanId, userId]);
+                        if (lastBot && (Math.floor(Date.now() / 1000) - lastBot.timestamp) < 900) { // within 15 min of a bot reply
+                            await db.run(`INSERT INTO reply_feedback (user_id, session_id, contact_id, bot_text, owner_text, created_at) VALUES (?,?,?,?,?,?)`,
+                                [userId, sessionId, selfCleanId, (lastBot.text || '').slice(0, 400), selfText.slice(0, 400), Math.floor(Date.now() / 1000)]);
+                            console.log(`[${sessionId}] 🧠 Learned from owner stepping in (${selfText.slice(0, 40)}…)`);
+                        }
+                    }
+                } catch (e) { /* learning is best-effort, never blocks */ }
                 console.log(`[${sessionId}] 👤 Saved self-message ("${msg.key.id.substring(0, 8)}..."). Skipping AI reply.`);
                 continue;
             }
@@ -2764,9 +2839,13 @@ async function startSession(userId, sessionId) {
                         }
                     }
 
-                    // NORMAL TEXT REPLY
+                    // NORMAL TEXT REPLY — with human typing rhythm.
+                    // A real person doesn't type a 3-line answer in 1.5s: scale the
+                    // "typing…" window with reply length (~45ms/char) plus jitter,
+                    // clamped so short replies feel snappy and long ones never stall.
                     await sock.sendPresenceUpdate('composing', jid);
-                    await delay(1500);
+                    const typingMs = Math.min(1200 + replyText.length * 45 + Math.random() * 900, 7000);
+                    await delay(typingMs);
                     await sock.sendMessage(jid, { text: replyText });
                     noteBotSentText(sessionId, cleanId, replyText); // keep this out of style samples
 
@@ -2787,6 +2866,9 @@ async function startSession(userId, sessionId) {
                 if (error.message?.includes('429') || error.message?.includes('limit')) {
                     io.emit('log', { sessionId, msg: `💥 API Limit hit! AI is cooling down...` });
                 }
+            }
+            } catch (msgErr) { // outer per-message guard (save/settings/burst phases)
+                console.error(`[${sessionId}] 🔥 Message processing error (continuing with batch):`, msgErr.message);
             }
         }
     });
@@ -3015,6 +3097,23 @@ server.on('error', (err) => {
 server.listen(PORT, '0.0.0.0', async () => {
     console.log(`🚀 Server running and listening on http://0.0.0.0:${PORT}`);
     
+    // --- AUTOMATIC DAILY BACKUPS (keep last 7) ---
+    // VACUUM INTO writes a consistent snapshot even while the DB is live (WAL mode).
+    const runBackup = async () => {
+        try {
+            if (!fs.existsSync('./data/backups')) fs.mkdirSync('./data/backups', { recursive: true });
+            const stamp = new Date().toISOString().slice(0, 10);
+            const dest = `./data/backups/chaka_data-${stamp}.db`;
+            if (fs.existsSync(dest)) return; // one per day
+            await db.exec(`VACUUM INTO '${dest}'`);
+            const old = fs.readdirSync('./data/backups').filter(f => f.startsWith('chaka_data-')).sort();
+            while (old.length > 7) { fs.unlinkSync(`./data/backups/${old.shift()}`); }
+            console.log(`🗄️ Backup written: ${dest}`);
+        } catch (e) { console.error('Backup failed:', e.message); }
+    };
+    setTimeout(runBackup, 60000);            // first backup a minute after boot
+    setInterval(runBackup, 6 * 3600 * 1000); // check every 6h (no-ops if today's exists)
+
     // --- START CRON-BRAIN (PHASE 3) ---
     setInterval(async () => {
         try {

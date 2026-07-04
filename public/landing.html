@@ -3,516 +3,285 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chaka — Your WhatsApp, on autopilot</title>
-    <meta name="description" content="Chaka is an AI assistant that replies to your WhatsApp messages 24/7 — in your voice. For businesses, creators, freelancers, and personal chats.">
+    <title>Chaka — WhatsApp, fully automated.</title>
+    <meta name="description" content="Chaka is the AI that runs your WhatsApp — replying in your voice, capturing every lead, closing sales while you sleep.">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
     <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: { 
-                        sans: ['Inter', 'sans-serif'],
-                        heading: ['Manrope', 'sans-serif']
-                    },
-                    colors: {
-                        base: '#0B0B0E',
-                        card: '#121216',
-                        cardHover: '#18181D',
-                        brandOrange: '#FC5A38',
-                        textMuted: '#8F919E',
-                        borderMuted: '#222329',
-                        waGreen: '#25D366'
-                    }
-                }
-            }
-        }
+        tailwind.config = { theme: { extend: {
+            fontFamily: { sans:['Inter','sans-serif'], display:['Space Grotesk','sans-serif'], heading:['Manrope','sans-serif'] },
+            colors: { ink:'#08080A', panel:'#0E0E12', panel2:'#141419', line:'#1C1D24', line2:'#2A2C35', muted:'#7E828F', orange:'#FC5A38', orange2:'#FF8A5B', wa:'#25D366' }
+        }}}
     </script>
     <style>
-        body {
-            background-color: #0B0B0E;
-            color: #FFFFFF;
-            overflow-x: hidden;
-        }
+        html,body{ background:#08080A; color:#F5F5F7; overflow-x:hidden; }
+        body{ font-family:'Inter',sans-serif; -webkit-font-smoothing:antialiased; }
+        .display{ font-family:'Space Grotesk',sans-serif; letter-spacing:-0.045em; line-height:0.95; }
+        h1,h2,h3,h4{ font-family:'Manrope',sans-serif; letter-spacing:-0.03em; }
 
-        /* Typography */
-        h1, h2, h3, h4, h5, h6 { font-family: 'Manrope', sans-serif; letter-spacing: -0.03em; }
+        /* Grain texture — static, GPU-promoted, NO blend mode (blend mode = per-frame repaint jank) */
+        .grain{ position:fixed; inset:0; z-index:2; pointer-events:none; opacity:.03; transform:translateZ(0);
+            background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
 
-        /* Crisp Borders */
-        .bento-card {
-            background: #121216;
-            border: 1px solid #222329;
-            transition: border-color 0.4s ease, background 0.4s ease, transform 0.4s ease;
-        }
-        .bento-card:hover {
-            border-color: #FC5A38;
-            background: #15151A;
-            transform: translateY(-2px);
-        }
+        /* One refined ambient light (no moving blobs), promoted to its own layer */
+        .halo{ position:fixed; top:-380px; left:50%; transform:translate(-50%,0) translateZ(0); width:1100px; height:720px; z-index:0; pointer-events:none;
+            background:radial-gradient(ellipse at center, rgba(252,90,56,0.13) 0%, rgba(252,90,56,0.04) 34%, transparent 66%); }
+        .vignette{ position:fixed; inset:0; z-index:0; pointer-events:none; transform:translateZ(0); background:radial-gradient(ellipse 90% 70% at 50% 20%, transparent 55%, rgba(0,0,0,0.55) 100%); }
+        .wrap{ position:relative; z-index:1; }
 
-        /* Glows & Gradients */
-        .text-gradient {
-            background: linear-gradient(135deg, #FFFFFF 0%, #A0A0A0 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .text-gradient-orange {
-            background: linear-gradient(135deg, #FC5A38 0%, #FF8A73 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .glow-text-orange {
-            position: relative;
-        }
-        .glow-text-orange::after {
-            content: 'WhatsApp workflow';
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: linear-gradient(135deg, #FC5A38 0%, #FF8A73 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            filter: blur(24px);
-            opacity: 0.4;
-            z-index: -1;
-        }
-        
-        /* Subtle Orange Ambient Light */
-        .ambient-light {
-            position: absolute;
-            top: 10%;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 600px;
-            height: 400px;
-            background: radial-gradient(circle, rgba(252, 90, 56, 0.15) 0%, rgba(252, 90, 56, 0) 70%);
-            z-index: -2;
-            pointer-events: none;
-        }
+        .of-text{ background:linear-gradient(180deg,#fff 0%,#8A8D98 130%); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+        .of-orange{ background:linear-gradient(120deg,#FF7A4D 0%,#FC5A38 100%); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
 
-        /* Button Styling */
-        .btn-primary {
-            background-color: #FC5A38;
-            color: #FFFFFF;
-            border: 1px solid #FC5A38;
-            box-shadow: 0 4px 14px 0 rgba(252, 90, 56, 0.39);
-            transition: all 0.2s ease;
-        }
-        .btn-primary:hover {
-            background-color: #e54d2e;
-            border-color: #e54d2e;
-            box-shadow: 0 6px 20px rgba(252, 90, 56, 0.5);
-            transform: translateY(-1px);
-        }
-        .btn-secondary {
-            background-color: #121216;
-            color: #FFFFFF;
-            border: 1px solid #3A3D47;
-            transition: all 0.2s ease;
-        }
-        .btn-secondary:hover {
-            background-color: #18181D;
-            border-color: #FC5A38;
-        }
+        /* Buttons */
+        .btn-p{ background:#FC5A38; color:#fff; transition:transform .25s cubic-bezier(.16,1,.3,1),box-shadow .3s,background .2s; box-shadow:0 10px 30px -10px rgba(252,90,56,.55); }
+        .btn-p:hover{ background:#ff6a49; box-shadow:0 16px 40px -12px rgba(252,90,56,.75); transform:translateY(-1px); }
+        .btn-g{ background:transparent; color:#fff; border:1px solid #2A2C35; transition:border-color .25s,background .25s,transform .25s; }
+        .btn-g:hover{ border-color:#4A4D57; background:rgba(255,255,255,.03); transform:translateY(-1px); }
+        .btn-p:active,.btn-g:active{ transform:scale(.97); }
+
+        /* Cards */
+        .tile{ position:relative; background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 40%),#0E0E12; border:1px solid #1C1D24; border-radius:22px; overflow:hidden; transition:border-color .35s,transform .35s,background .35s; }
+        .tile:hover{ border-color:#33353F; transform:translateY(-3px); }
+        .tile .glow{ position:absolute; inset:0; opacity:0; transition:opacity .4s; pointer-events:none; background:radial-gradient(480px circle at var(--x,50%) var(--y,0%),rgba(252,90,56,.10),transparent 55%); }
+        .tile:hover .glow{ opacity:1; }
+        .hair{ border-top:1px solid #1C1D24; }
+
+        /* Product mock */
+        .device{ background:linear-gradient(180deg,#131318,#0B0B0F); border:1px solid #23242C; border-radius:26px; box-shadow:0 60px 120px -40px rgba(0,0,0,.9), 0 0 0 1px rgba(252,90,56,.06), 0 0 90px -30px rgba(252,90,56,.25); }
+        .bin{ background:#17171D; border:1px solid #23242C; }
+        .bout{ background:linear-gradient(135deg,#FC5A38,#E8472A); }
+        .chip{ background:#101015; border:1px solid #23242C; box-shadow:0 20px 40px -20px rgba(0,0,0,.9); }
 
         /* Marquee */
-        .marquee-container {
-            display: flex;
-            overflow: hidden;
-            mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
-            -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
-        }
-        .marquee-content {
-            display: flex;
-            flex-shrink: 0;
-            align-items: center;
-            justify-content: space-around;
-            min-width: 100%;
-            animation: scroll 30s linear infinite;
-        }
-        @keyframes scroll {
-            0% { transform: translateX(0); }
-            100% { transform: translateX(-100%); }
-        }
+        .mq{ display:flex; overflow:hidden; -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent); mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent); }
+        .mq-row{ display:flex; flex-shrink:0; gap:4.5rem; padding-right:4.5rem; align-items:center; animation:mv 32s linear infinite; }
+        @keyframes mv{ to{ transform:translateX(-100%) } }
 
-        /* Chat UI Clean */
-        .chat-container {
-            background: #0B0B0E;
-            border: 1px solid #222329;
-            box-shadow: 0 30px 60px -15px rgba(0,0,0,1), 0 0 0 1px rgba(252, 90, 56, 0.1);
-        }
-        .chat-bubble-in { background: #18181D; border: 1px solid #222329; }
-        .chat-bubble-out { background: #FC5A38; border: 1px solid #FC5A38; color: white; }
+        .dot{ animation:dp 2s infinite; }
+        @keyframes dp{ 0%,100%{ box-shadow:0 0 0 0 rgba(37,211,102,.5) } 50%{ box-shadow:0 0 0 5px rgba(37,211,102,0) } }
+        .float{ animation:fl 5s ease-in-out infinite; }
+        @keyframes fl{ 0%,100%{ transform:translateY(0) } 50%{ transform:translateY(-10px) } }
 
-        /* Navigation Grid Lines */
-        .bg-grid {
-            background-size: 50px 50px;
-            background-image: 
-                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-            mask-image: linear-gradient(to bottom, black 30%, transparent 100%);
-            -webkit-mask-image: linear-gradient(to bottom, black 30%, transparent 100%);
-        }
+        .reveal{ opacity:0; transform:translateY(24px); }
+        .nav-b{ background:rgba(8,8,10,.9); }
+
+        @media (prefers-reduced-motion:reduce){ .reveal{opacity:1!important;transform:none!important} .mq-row,.float,.dot{animation:none!important} html{scroll-behavior:auto} }
     </style>
 </head>
-<body class="selection:bg-brandOrange/30 selection:text-white">
+<body class="selection:bg-orange/30 selection:text-white">
+    <div class="halo"></div><div class="vignette"></div><div class="grain"></div>
 
-    <!-- Ambient Orange Glow -->
-    <div class="ambient-light"></div>
-
-    <!-- Grid Background -->
-    <div class="absolute inset-0 bg-grid h-[80vh] z-[-1] pointer-events-none"></div>
-
+    <div class="wrap">
     <!-- NAV -->
-    <nav class="fixed top-0 inset-x-0 z-50 bg-[#0B0B0E]/80 backdrop-blur-md border-b border-[#222329]">
-        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-            <a href="/" class="flex items-center gap-3 group">
-                <div class="w-8 h-8 bg-brandOrange text-white border border-[#FC5A38] rounded-md flex items-center justify-center shadow-[0_0_15px_rgba(252,90,56,0.3)] group-hover:shadow-[0_0_20px_rgba(252,90,56,0.5)] transition-shadow">
-                    <i class="fas fa-robot text-sm"></i>
-                </div>
-                <span class="font-heading font-bold text-lg text-white tracking-tight">Chaka</span>
+    <nav class="fixed top-0 inset-x-0 z-50 nav-b border-b border-line/70">
+        <div class="max-w-6xl mx-auto px-6 h-[68px] flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2.5 group">
+                <div class="w-8 h-8 rounded-[9px] bg-gradient-to-br from-orange to-[#E8472A] flex items-center justify-center shadow-[0_0_20px_rgba(252,90,56,.45)]"><i class="fas fa-bolt text-white text-xs"></i></div>
+                <span class="font-heading font-extrabold text-[17px] tracking-tight">Chaka</span>
             </a>
-            <div class="hidden md:flex items-center gap-8 text-sm font-medium text-textMuted">
-                <a href="#features" class="hover:text-white transition-colors">Platform</a>
-                <a href="#how" class="hover:text-white transition-colors">Solutions</a>
+            <div class="hidden md:flex items-center gap-8 text-[13.5px] text-muted">
+                <a href="#platform" class="hover:text-white transition-colors">Platform</a>
+                <a href="#how" class="hover:text-white transition-colors">How it works</a>
                 <a href="#who" class="hover:text-white transition-colors">Customers</a>
             </div>
-            <div class="flex items-center gap-3">
-                <a href="/login.html" class="text-sm font-medium text-textMuted hover:text-white transition-colors hidden sm:block px-3">Log in</a>
-                <a href="/login.html?signup=1" class="btn-primary text-sm font-semibold px-4 py-2 rounded-md">Start free trial</a>
+            <div class="flex items-center gap-2">
+                <a href="/login.html" class="hidden sm:block text-[13.5px] text-muted hover:text-white transition-colors px-3 py-2">Log in</a>
+                <a href="/login.html?signup=1" class="btn-p text-[13.5px] font-heading font-semibold px-4 py-2.5 rounded-full">Start free</a>
             </div>
         </div>
     </nav>
 
     <!-- HERO -->
-    <header class="relative pt-40 pb-20">
-        <div class="max-w-5xl mx-auto px-6 text-center">
-            
-            <div class="inline-flex items-center gap-2 bg-[#121216] border border-[#222329] rounded-full px-4 py-1.5 text-xs font-medium text-textMuted mb-8 hover:border-brandOrange transition-colors cursor-pointer">
-                <span class="w-2 h-2 rounded-full bg-brandOrange animate-pulse"></span>
-                <span class="text-white/90">Chaka AI 2.0</span> is now generally available
-                <i class="fas fa-arrow-right ml-1 text-brandOrange"></i>
-            </div>
-            
-            <h1 class="text-5xl sm:text-7xl font-extrabold leading-[1.05] tracking-tight mx-auto max-w-4xl text-gradient">
-                The future of your<br>
-                <span class="text-gradient-orange glow-text-orange relative inline-block">WhatsApp workflow</span>
+    <header class="relative pt-36 sm:pt-44 pb-24 px-6">
+        <div class="max-w-5xl mx-auto text-center">
+            <a href="#platform" data-r class="inline-flex items-center gap-2.5 bg-panel/70 border border-line rounded-full pl-1.5 pr-4 py-1.5 text-[12.5px] text-muted mb-9 hover:border-line2 transition-colors">
+                <span class="bg-orange/15 text-orange rounded-full px-2 py-0.5 text-[11px] font-bold tracking-wide">NEW</span>
+                Chaka now captures leads &amp; escalates to you <i class="fas fa-arrow-right text-[10px] text-orange"></i>
+            </a>
+
+            <h1 data-r class="display text-[15vw] sm:text-[104px] lg:text-[128px] font-bold">
+                <span class="of-text block">WhatsApp,</span>
+                <span class="of-orange block">on autopilot.</span>
             </h1>
-            
-            <p class="text-textMuted text-lg sm:text-xl mt-6 max-w-2xl mx-auto leading-relaxed font-sans">
-                Powerful SaaS platform to manage your WhatsApp conversations, automate routine replies, and grow your business faster.
+
+            <p data-r class="text-muted text-lg sm:text-xl mt-8 max-w-xl mx-auto leading-relaxed">
+                The AI that runs your WhatsApp 24/7 — replying in your voice, capturing every lead, and closing sales while you sleep.
             </p>
-            
-            <div class="flex flex-wrap items-center justify-center gap-4 mt-10">
-                <a href="/login.html?signup=1" class="btn-primary font-heading font-semibold px-7 py-3.5 rounded-md flex items-center gap-2 text-[15px]">
-                    Get Started <i class="fas fa-arrow-right text-xs"></i>
-                </a>
-                <a href="#features" class="btn-secondary font-heading font-semibold px-7 py-3.5 rounded-md flex items-center gap-2 text-[15px]">
-                    Explore Platform
-                </a>
+
+            <div data-r class="flex flex-wrap items-center justify-center gap-3 mt-10">
+                <a href="/login.html?signup=1" class="btn-p font-heading font-semibold px-7 py-4 rounded-full flex items-center gap-2 text-[15px]">Start free — link WhatsApp <i class="fas fa-arrow-right text-xs"></i></a>
+                <a href="#demo" class="btn-g font-heading font-semibold px-7 py-4 rounded-full flex items-center gap-2 text-[15px]"><i class="fas fa-play text-[10px]"></i> See it live</a>
             </div>
+            <p data-r class="text-[12.5px] text-muted/70 mt-5">No code · No API keys · Set up in 2 minutes</p>
         </div>
 
-        <!-- Dashboard Mockup (Clean SaaS Look) -->
-        <div class="max-w-4xl mx-auto px-6 mt-20 relative">
-            <div class="chat-container rounded-xl overflow-hidden p-1.5 relative z-10 backdrop-blur-xl bg-[#0B0B0E]/80">
-                <div class="bg-[#121216] rounded-lg border border-[#222329] overflow-hidden shadow-inner">
-                    
-                    <!-- Header -->
-                    <div class="flex items-center justify-between px-5 py-4 border-b border-[#222329] bg-[#0B0B0E]">
+        <!-- PRODUCT VISUAL -->
+        <div id="demo" data-r class="max-w-3xl mx-auto mt-20 relative">
+            <div class="device p-2.5 relative z-10">
+                <div class="bg-ink rounded-[18px] border border-line overflow-hidden">
+                    <div class="flex items-center justify-between px-5 py-4 border-b border-line bg-panel">
                         <div class="flex items-center gap-3">
-                            <div class="w-9 h-9 bg-gradient-to-br from-[#18181D] to-[#222329] rounded-full border border-[#3A3D47] flex items-center justify-center text-textMuted text-xs"><i class="fas fa-user"></i></div>
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-orange to-[#E8472A] flex items-center justify-center font-heading font-bold text-sm">B</div>
                             <div>
-                                <div class="text-sm font-heading font-semibold text-white/90 tracking-tight">Jane Doe</div>
-                                <div class="text-[11px] font-sans text-brandOrange flex items-center gap-1.5 font-medium">
-                                    <span class="w-1.5 h-1.5 rounded-full bg-brandOrange animate-pulse"></span> AI Active
-                                </div>
+                                <div class="text-[14px] font-heading font-semibold">Bella's Boutique</div>
+                                <div class="text-[11px] text-wa flex items-center gap-1.5 font-medium"><span class="w-1.5 h-1.5 rounded-full bg-wa dot"></span> Chaka is handling this chat</div>
                             </div>
                         </div>
-                        <div class="flex gap-2">
-                            <div class="w-8 h-8 rounded-md hover:bg-[#18181D] flex items-center justify-center transition-colors text-textMuted cursor-pointer"><i class="fas fa-phone-alt text-xs"></i></div>
-                            <div class="w-8 h-8 rounded-md hover:bg-[#18181D] flex items-center justify-center transition-colors text-textMuted cursor-pointer"><i class="fas fa-video text-xs"></i></div>
-                            <div class="w-8 h-8 rounded-md hover:bg-[#18181D] flex items-center justify-center transition-colors text-textMuted cursor-pointer"><i class="fas fa-ellipsis-v text-xs"></i></div>
-                        </div>
+                        <div class="flex gap-1.5 text-muted"><span class="w-8 h-8 rounded-lg hover:bg-panel2 grid place-items-center transition-colors cursor-pointer"><i class="fas fa-phone text-xs"></i></span><span class="w-8 h-8 rounded-lg hover:bg-panel2 grid place-items-center transition-colors cursor-pointer"><i class="fas fa-video text-xs"></i></span></div>
                     </div>
-
-                    <!-- Chat Body -->
-                    <div class="space-y-5 px-6 py-8 text-[14px] font-sans">
-                        <div class="flex flex-col gap-1.5 items-start">
-                            <div class="chat-bubble-in rounded-2xl rounded-tl-sm px-4 py-3 max-w-[80%] text-white/90 shadow-sm leading-relaxed">Can you confirm the enterprise pricing tier details?</div>
-                            <span class="text-[11px] text-[#555968] ml-1 font-medium">11:42 AM</span>
-                        </div>
-
-                        <div class="flex flex-col gap-1.5 items-end">
-                            <div class="chat-bubble-out rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%] text-white shadow-md leading-relaxed">The enterprise tier starts at $499/mo and includes unlimited seats, advanced API access, and a dedicated success manager. Shall I send the full PDF breakdown?</div>
-                            <span class="text-[11px] text-[#555968] mr-1 font-medium">11:42 AM <i class="fas fa-check-double ml-0.5 text-brandOrange"></i></span>
-                        </div>
-                        
-                        <div class="flex flex-col gap-1.5 items-start">
-                            <div class="chat-bubble-in rounded-2xl rounded-tl-sm px-4 py-3 max-w-[80%] text-white/90 shadow-sm leading-relaxed">Yes please, that would be great.</div>
-                            <span class="text-[11px] text-[#555968] ml-1 font-medium">11:44 AM</span>
-                        </div>
-                        
-                        <div class="flex items-center gap-1.5 pl-4 pt-2">
-                            <span class="w-1.5 h-1.5 bg-brandOrange rounded-full animate-bounce" style="animation-delay: 0ms"></span>
-                            <span class="w-1.5 h-1.5 bg-brandOrange rounded-full animate-bounce" style="animation-delay: 150ms"></span>
-                            <span class="w-1.5 h-1.5 bg-brandOrange rounded-full animate-bounce" style="animation-delay: 300ms"></span>
-                        </div>
+                    <div class="px-6 py-7 space-y-4 text-[14px]" style="background:radial-gradient(120% 80% at 50% 0%, rgba(252,90,56,.03), transparent 60%)">
+                        <div class="msg flex flex-col items-start gap-1"><div class="bin rounded-2xl rounded-tl-md px-4 py-2.5 max-w-[78%] leading-relaxed">Hey! Do you have the linen dress in medium? 👗</div><span class="text-[11px] text-muted/60 ml-1">2:14 PM</span></div>
+                        <div class="msg flex flex-col items-end gap-1"><div class="bout rounded-2xl rounded-tr-md px-4 py-2.5 max-w-[82%] text-white leading-relaxed">Yes! The linen dress in medium is ₦18,500 and in stock. Want me to reserve it, or arrange delivery today? 🚚</div><span class="text-[11px] text-muted/60 mr-1">2:14 PM <i class="fas fa-check-double text-wa"></i></span></div>
+                        <div class="msg flex flex-col items-start gap-1"><div class="bin rounded-2xl rounded-tl-md px-4 py-2.5 max-w-[78%] leading-relaxed">delivery pls, I'm in Lekki</div><span class="text-[11px] text-muted/60 ml-1">2:15 PM</span></div>
+                        <div class="msg flex items-center gap-1.5 pl-3 pt-1"><span class="w-1.5 h-1.5 bg-orange rounded-full animate-bounce" style="animation-delay:0ms"></span><span class="w-1.5 h-1.5 bg-orange rounded-full animate-bounce" style="animation-delay:.15s"></span><span class="w-1.5 h-1.5 bg-orange rounded-full animate-bounce" style="animation-delay:.3s"></span></div>
                     </div>
-                    
-                    <!-- Input Area Mockup -->
-                    <div class="px-5 py-4 border-t border-[#222329] bg-[#0B0B0E] flex items-center gap-3">
-                        <div class="w-8 h-8 rounded-full bg-[#18181D] flex items-center justify-center text-textMuted"><i class="fas fa-plus text-xs"></i></div>
-                        <div class="flex-1 bg-[#18181D] border border-[#222329] rounded-full h-10 px-4 flex items-center">
-                            <span class="text-[#555968] text-sm">Type a message...</span>
-                        </div>
-                        <div class="w-10 h-10 rounded-full bg-brandOrange flex items-center justify-center text-white shadow-lg shadow-brandOrange/20"><i class="fas fa-microphone text-sm"></i></div>
-                    </div>
-
                 </div>
             </div>
-            
+            <!-- floating annotation chips -->
+            <div class="chip float hidden sm:flex absolute -left-8 top-28 items-center gap-2.5 rounded-2xl px-3.5 py-2.5" style="animation-delay:.4s">
+                <div class="w-8 h-8 rounded-lg bg-orange/15 text-orange grid place-items-center"><i class="fas fa-bullseye text-xs"></i></div>
+                <div><div class="text-[12px] font-semibold leading-none">Lead captured</div><div class="text-[10.5px] text-muted mt-1">Hot · wants delivery</div></div>
+            </div>
+            <div class="chip float hidden sm:flex absolute -right-8 bottom-20 items-center gap-2.5 rounded-2xl px-3.5 py-2.5" style="animation-delay:1.4s">
+                <div class="w-8 h-8 rounded-lg bg-wa/15 text-wa grid place-items-center"><i class="fas fa-bolt text-xs"></i></div>
+                <div><div class="text-[12px] font-semibold leading-none">Replied in 1.9s</div><div class="text-[10.5px] text-muted mt-1">From your price list</div></div>
+            </div>
         </div>
     </header>
 
-    <!-- TRUST MARQUEE -->
-    <section class="border-y border-[#222329] py-10 bg-[#08080A]">
-        <div class="max-w-7xl mx-auto px-6 flex flex-col items-center">
-            <p class="text-[11px] font-bold tracking-[0.2em] text-[#555968] uppercase mb-8">Trusted by innovative teams worldwide</p>
-            <div class="marquee-container w-full opacity-60 hover:opacity-100 transition-opacity duration-500">
-                <div class="marquee-content gap-20 pr-20 text-2xl font-heading font-extrabold text-[#3A3D47]">
-                    <span>ACME Corp</span>
-                    <span>GlobalTech</span>
-                    <span>Synergy</span>
-                    <span>Nexus</span>
-                    <span>Vertex</span>
-                    <span>Quantum</span>
-                    <span>ACME Corp</span>
-                    <span>GlobalTech</span>
-                    <span>Synergy</span>
-                    <span>Nexus</span>
-                </div>
-                <div class="marquee-content gap-20 pr-20 text-2xl font-heading font-extrabold text-[#3A3D47]" aria-hidden="true">
-                    <span>ACME Corp</span>
-                    <span>GlobalTech</span>
-                    <span>Synergy</span>
-                    <span>Nexus</span>
-                    <span>Vertex</span>
-                    <span>Quantum</span>
-                    <span>ACME Corp</span>
-                    <span>GlobalTech</span>
-                    <span>Synergy</span>
-                    <span>Nexus</span>
-                </div>
+    <!-- MARQUEE -->
+    <section class="border-y border-line py-9">
+        <div class="max-w-6xl mx-auto px-6">
+            <p class="text-[11px] font-semibold tracking-[0.22em] text-muted/60 uppercase text-center mb-7">Powering conversations for</p>
+            <div class="mq opacity-70">
+                <div class="mq-row text-[22px] font-heading font-bold text-[#34363F]"><span>Retail</span><span>Salons</span><span>Agencies</span><span>Creators</span><span>Restaurants</span><span>Freelancers</span><span>E-commerce</span><span>Real Estate</span></div>
+                <div class="mq-row text-[22px] font-heading font-bold text-[#34363F]" aria-hidden="true"><span>Retail</span><span>Salons</span><span>Agencies</span><span>Creators</span><span>Restaurants</span><span>Freelancers</span><span>E-commerce</span><span>Real Estate</span></div>
             </div>
         </div>
     </section>
 
-    <!-- BENTO BOX FEATURES -->
-    <section id="features" class="py-32 relative">
-        <div class="absolute left-0 top-1/2 -translate-y-1/2 w-96 h-96 bg-brandOrange/5 rounded-full blur-[100px] pointer-events-none"></div>
-        <div class="max-w-7xl mx-auto px-6 relative z-10">
-            <div class="mb-20">
-                <div class="inline-flex items-center gap-2 border border-brandOrange/30 bg-brandOrange/5 rounded-full px-3 py-1 text-xs font-medium text-brandOrange mb-6">
-                    <i class="fas fa-layer-group"></i> Platform Features
-                </div>
-                <h2 class="text-4xl sm:text-5xl font-extrabold tracking-tight text-gradient">Everything you need<br>to scale your communication.</h2>
-            </div>
-            
-            <!-- Bento Grid -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                
-                <!-- Large Card -->
-                <div class="md:col-span-2 bento-card rounded-2xl p-10 flex flex-col justify-between group min-h-[340px] relative overflow-hidden">
-                    <div class="absolute top-0 right-0 w-64 h-64 bg-brandOrange/5 rounded-full blur-[60px] transform translate-x-1/2 -translate-y-1/2 group-hover:bg-brandOrange/10 transition-colors duration-500"></div>
-                    <div class="w-14 h-14 bg-[#18181D] border border-[#3A3D47] group-hover:border-brandOrange/50 rounded-xl flex items-center justify-center text-white mb-8 transition-colors relative z-10 shadow-lg">
-                        <i class="fas fa-bolt text-lg group-hover:text-brandOrange transition-colors"></i>
-                    </div>
-                    <div class="relative z-10">
-                        <h3 class="text-2xl font-heading font-bold text-white mb-3">Instant automation</h3>
-                        <p class="text-[#B4B7C2] font-sans text-base max-w-lg leading-relaxed">Every message gets a thoughtful, context-aware reply in seconds. Our engine runs 24/7 so you never leave a lead waiting.</p>
-                    </div>
-                </div>
-
-                <!-- Small Card -->
-                <div class="bento-card rounded-2xl p-10 flex flex-col justify-between group min-h-[340px] relative overflow-hidden">
-                    <div class="absolute bottom-0 right-0 w-40 h-40 bg-brandOrange/5 rounded-full blur-[40px] group-hover:bg-brandOrange/10 transition-colors duration-500"></div>
-                    <div class="w-14 h-14 bg-[#18181D] border border-[#3A3D47] group-hover:border-brandOrange/50 rounded-xl flex items-center justify-center text-white mb-8 transition-colors relative z-10 shadow-lg">
-                        <i class="fas fa-microphone text-lg group-hover:text-brandOrange transition-colors"></i>
-                    </div>
-                    <div class="relative z-10">
-                        <h3 class="text-xl font-heading font-bold text-white mb-3">Voice & Vision</h3>
-                        <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">Transcribes audio notes and analyzes incoming photos.</p>
-                    </div>
-                </div>
-
-                <!-- Small Card -->
-                <div class="bento-card rounded-2xl p-10 flex flex-col justify-between group min-h-[340px] relative overflow-hidden">
-                    <div class="absolute top-0 left-0 w-40 h-40 bg-brandOrange/5 rounded-full blur-[40px] group-hover:bg-brandOrange/10 transition-colors duration-500"></div>
-                    <div class="w-14 h-14 bg-[#18181D] border border-[#3A3D47] group-hover:border-brandOrange/50 rounded-xl flex items-center justify-center text-white mb-8 transition-colors relative z-10 shadow-lg">
-                        <i class="fas fa-users text-lg group-hover:text-brandOrange transition-colors"></i>
-                    </div>
-                    <div class="relative z-10">
-                        <h3 class="text-xl font-heading font-bold text-white mb-3">Multi-Agent Setup</h3>
-                        <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">Connect unlimited numbers to a single centralized dashboard.</p>
-                    </div>
-                </div>
-
-                <!-- Large Card -->
-                <div class="md:col-span-2 bento-card rounded-2xl p-10 flex flex-col justify-between group min-h-[340px] relative overflow-hidden">
-                    <div class="absolute bottom-0 right-0 w-64 h-64 bg-brandOrange/5 rounded-full blur-[60px] transform translate-x-1/4 translate-y-1/4 group-hover:bg-brandOrange/10 transition-colors duration-500"></div>
-                    <div class="w-14 h-14 bg-[#18181D] border border-[#3A3D47] group-hover:border-brandOrange/50 rounded-xl flex items-center justify-center text-white mb-8 transition-colors relative z-10 shadow-lg">
-                        <i class="fas fa-shield-alt text-lg group-hover:text-brandOrange transition-colors"></i>
-                    </div>
-                    <div class="relative z-10">
-                        <h3 class="text-2xl font-heading font-bold text-white mb-3">Enterprise-grade Control</h3>
-                        <p class="text-[#B4B7C2] font-sans text-base max-w-lg leading-relaxed">Toggle auto-reply per contact, set strict behavioral rules, or require human approval for high-value leads before a message is sent.</p>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-    </section>
-
-    <!-- METRICS SECTION -->
-    <section class="py-32 border-t border-[#222329] bg-[#08080A]">
-        <div class="max-w-7xl mx-auto px-6">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-20 items-center">
+    <!-- PLATFORM (numbered editorial) -->
+    <section id="platform" class="py-28 sm:py-36 px-6">
+        <div class="max-w-6xl mx-auto">
+            <div class="flex items-end justify-between mb-16 flex-wrap gap-6">
                 <div>
-                    <h2 class="text-4xl font-heading font-extrabold mb-6 text-gradient tracking-tight">Built for performance<br>and reliability.</h2>
-                    <p class="text-[#B4B7C2] font-sans text-lg mb-8 max-w-md leading-relaxed">Our infrastructure is designed to handle high-throughput messaging without dropping a single webhook or delaying a response.</p>
-                    <a href="#how" class="text-brandOrange font-heading font-semibold hover:text-white transition-colors flex items-center gap-2 group">
-                        View documentation <i class="fas fa-arrow-right text-xs group-hover:translate-x-1 transition-transform"></i>
-                    </a>
+                    <p data-r class="text-orange font-heading font-semibold text-[13px] tracking-[0.15em] uppercase mb-4">01 — The platform</p>
+                    <h2 data-r class="text-4xl sm:text-6xl font-extrabold tracking-tight max-w-2xl of-text leading-[1.02]">A full sales team, living in your WhatsApp</h2>
                 </div>
-                
-                <div class="grid grid-cols-2 gap-6">
-                    <div class="bg-[#121216] border border-[#222329] hover:border-[#3A3D47] transition-colors rounded-2xl p-8 shadow-lg">
-                        <div class="text-5xl font-heading font-bold text-white mb-3">99.9<span class="text-brandOrange">%</span></div>
-                        <div class="text-[11px] text-[#555968] font-sans uppercase tracking-[0.15em] font-bold">Uptime SLA</div>
-                    </div>
-                    <div class="bg-[#121216] border border-[#222329] hover:border-[#3A3D47] transition-colors rounded-2xl p-8 shadow-lg">
-                        <div class="text-5xl font-heading font-bold text-white mb-3"><span class="text-brandOrange text-3xl align-top">&lt;</span>200<span class="text-brandOrange text-2xl">ms</span></div>
-                        <div class="text-[11px] text-[#555968] font-sans uppercase tracking-[0.15em] font-bold">Avg Latency</div>
-                    </div>
-                    <div class="bg-[#121216] border border-[#222329] hover:border-[#3A3D47] transition-colors rounded-2xl p-8 shadow-lg">
-                        <div class="text-5xl font-heading font-bold text-white mb-3 text-gradient">SOC 2</div>
-                        <div class="text-[11px] text-[#555968] font-sans uppercase tracking-[0.15em] font-bold">Compliance</div>
-                    </div>
-                    <div class="bg-[#121216] border border-[#222329] hover:border-[#3A3D47] transition-colors rounded-2xl p-8 shadow-lg">
-                        <div class="text-5xl font-heading font-bold text-white mb-3 text-gradient">24/7</div>
-                        <div class="text-[11px] text-[#555968] font-sans uppercase tracking-[0.15em] font-bold">Support</div>
-                    </div>
+                <a data-r href="/login.html?signup=1" class="text-muted hover:text-white transition-colors text-sm font-medium flex items-center gap-2 group">Start free <i class="fas fa-arrow-right text-xs group-hover:translate-x-1 transition-transform"></i></a>
+            </div>
+
+            <div class="grid md:grid-cols-6 gap-4">
+                <div data-r class="tile md:col-span-4 p-8 sm:p-10 flex flex-col justify-between min-h-[320px]"><div class="glow"></div>
+                    <div class="flex items-center gap-2 text-muted/70 text-[12px] font-medium"><span class="w-6 h-6 rounded-md bg-panel2 grid place-items-center"><i class="fas fa-bolt text-orange text-[10px]"></i></span> ALWAYS ON</div>
+                    <div class="mt-auto"><h3 class="text-2xl sm:text-3xl font-bold mb-3">Instant, on-brand replies — 24/7</h3><p class="text-muted leading-relaxed max-w-lg">Every message gets a thoughtful answer in seconds, in your exact tone. Your customers never wait, never get ghosted, never hear a robot.</p></div>
+                </div>
+                <div data-r class="tile md:col-span-2 p-8 flex flex-col justify-between min-h-[320px]"><div class="glow"></div>
+                    <div class="w-11 h-11 rounded-xl bg-orange/10 border border-orange/20 text-orange grid place-items-center"><i class="fas fa-microphone"></i></div>
+                    <div><h3 class="text-xl font-bold mb-2">Voice &amp; vision</h3><p class="text-muted text-[14.5px] leading-relaxed">Understands photos and transcribes voice notes — then replies in context.</p></div>
+                </div>
+                <div data-r class="tile md:col-span-2 p-8 flex flex-col justify-between min-h-[280px]"><div class="glow"></div>
+                    <div class="w-11 h-11 rounded-xl bg-orange/10 border border-orange/20 text-orange grid place-items-center"><i class="fas fa-bullseye"></i></div>
+                    <div><h3 class="text-xl font-bold mb-2">Lead capture</h3><p class="text-muted text-[14.5px] leading-relaxed">Every interested chat becomes a tracked lead, scored and ready.</p></div>
+                </div>
+                <div data-r class="tile md:col-span-2 p-8 flex flex-col justify-between min-h-[280px]"><div class="glow"></div>
+                    <div class="w-11 h-11 rounded-xl bg-orange/10 border border-orange/20 text-orange grid place-items-center"><i class="fas fa-hand"></i></div>
+                    <div><h3 class="text-xl font-bold mb-2">Human handoff</h3><p class="text-muted text-[14.5px] leading-relaxed">It taps you in for angry, complex, or high-value chats.</p></div>
+                </div>
+                <div data-r class="tile md:col-span-2 p-8 flex flex-col justify-between min-h-[280px]"><div class="glow"></div>
+                    <div class="w-11 h-11 rounded-xl bg-orange/10 border border-orange/20 text-orange grid place-items-center"><i class="fas fa-layer-group"></i></div>
+                    <div><h3 class="text-xl font-bold mb-2">Multi-number</h3><p class="text-muted text-[14.5px] leading-relaxed">Run every WhatsApp line from one calm dashboard.</p></div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- SOLUTIONS / HOW IT WORKS -->
-    <section id="how" class="py-32 border-t border-[#222329] relative">
-        <div class="max-w-7xl mx-auto px-6">
-            <div class="mb-20">
-                <div class="inline-flex items-center gap-2 border border-brandOrange/30 bg-brandOrange/5 rounded-full px-3 py-1 text-xs font-medium text-brandOrange mb-6">
-                    <i class="fas fa-route"></i> Solutions
-                </div>
-                <h2 class="text-4xl sm:text-5xl font-heading font-extrabold tracking-tight text-gradient">Live in three steps.</h2>
-                <p class="text-[#B4B7C2] font-sans text-lg mt-5 max-w-xl leading-relaxed">No code, no API keys. Connect your WhatsApp and Chaka starts handling conversations in your voice.</p>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div class="bento-card rounded-2xl p-8">
-                    <div class="text-brandOrange font-heading font-bold text-4xl mb-5">01</div>
-                    <h3 class="text-xl font-heading font-bold text-white mb-3">Create your workspace</h3>
-                    <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">Sign up and tell Chaka your use case — business, personal, creator, or freelancer.</p>
-                </div>
-                <div class="bento-card rounded-2xl p-8">
-                    <div class="text-brandOrange font-heading font-bold text-4xl mb-5">02</div>
-                    <h3 class="text-xl font-heading font-bold text-white mb-3">Scan the QR</h3>
-                    <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">Link your number in seconds, just like WhatsApp Web. Add your products, prices, and FAQs.</p>
-                </div>
-                <div class="bento-card rounded-2xl p-8">
-                    <div class="text-brandOrange font-heading font-bold text-4xl mb-5">03</div>
-                    <h3 class="text-xl font-heading font-bold text-white mb-3">Let Chaka reply</h3>
-                    <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">It answers 24/7, captures leads, and taps you in when a chat needs a human.</p>
-                </div>
+    <!-- STATS band -->
+    <section class="py-16 border-y border-line">
+        <div class="max-w-5xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 divide-x divide-line/60">
+            <div data-r class="px-4 text-center"><div class="display text-5xl font-bold of-orange"><span data-count="24">0</span>/7</div><p class="text-[12.5px] text-muted mt-3 uppercase tracking-wider">never sleeps</p></div>
+            <div data-r class="px-4 text-center"><div class="display text-5xl font-bold of-orange"><span data-count="2">0</span>s</div><p class="text-[12.5px] text-muted mt-3 uppercase tracking-wider">avg reply</p></div>
+            <div data-r class="px-4 text-center"><div class="display text-5xl font-bold of-orange"><span data-count="100">0</span>%</div><p class="text-[12.5px] text-muted mt-3 uppercase tracking-wider">your voice</p></div>
+            <div data-r class="px-4 text-center"><div class="display text-5xl font-bold of-orange">∞</div><p class="text-[12.5px] text-muted mt-3 uppercase tracking-wider">chats handled</p></div>
+        </div>
+    </section>
+
+    <!-- HOW -->
+    <section id="how" class="py-28 sm:py-36 px-6">
+        <div class="max-w-6xl mx-auto">
+            <p data-r class="text-orange font-heading font-semibold text-[13px] tracking-[0.15em] uppercase mb-4">02 — How it works</p>
+            <h2 data-r class="text-4xl sm:text-6xl font-extrabold tracking-tight of-text mb-16 max-w-2xl leading-[1.02]">Live in three steps</h2>
+            <div class="grid md:grid-cols-3 gap-px bg-line rounded-3xl overflow-hidden border border-line">
+                <div data-r class="bg-ink p-9 hover:bg-panel transition-colors"><div class="display text-6xl font-bold text-line2 mb-6">01</div><h3 class="text-xl font-bold mb-2">Create your account</h3><p class="text-muted text-[14.5px] leading-relaxed">Sign up in seconds and tell Chaka how you'll use it — business, creator, freelancer or personal.</p></div>
+                <div data-r class="bg-ink p-9 hover:bg-panel transition-colors"><div class="display text-6xl font-bold text-line2 mb-6">02</div><h3 class="text-xl font-bold mb-2">Scan the QR</h3><p class="text-muted text-[14.5px] leading-relaxed">Link your WhatsApp in one tap — exactly like WhatsApp Web. Your number, your chats.</p></div>
+                <div data-r class="bg-ink p-9 hover:bg-panel transition-colors"><div class="display text-6xl font-bold text-line2 mb-6">03</div><h3 class="text-xl font-bold mb-2">Let Chaka run it</h3><p class="text-muted text-[14.5px] leading-relaxed">It replies, captures leads, answers from your price list — and flags anything that needs you.</p></div>
             </div>
         </div>
     </section>
 
-    <!-- CUSTOMERS / WHO IT'S FOR -->
-    <section id="who" class="py-32 border-t border-[#222329] bg-[#08080A] relative">
-        <div class="max-w-7xl mx-auto px-6">
-            <div class="mb-20">
-                <div class="inline-flex items-center gap-2 border border-brandOrange/30 bg-brandOrange/5 rounded-full px-3 py-1 text-xs font-medium text-brandOrange mb-6">
-                    <i class="fas fa-users"></i> Customers
-                </div>
-                <h2 class="text-4xl sm:text-5xl font-heading font-extrabold tracking-tight text-gradient">Built for the way you chat.</h2>
-                <p class="text-[#B4B7C2] font-sans text-lg mt-5 max-w-xl leading-relaxed">Pick your use case at signup and Chaka configures itself to your goals.</p>
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                <div class="bento-card rounded-2xl p-8">
-                    <div class="w-12 h-12 bg-[#18181D] border border-[#3A3D47] rounded-xl flex items-center justify-center text-brandOrange mb-5"><i class="fas fa-store"></i></div>
-                    <h3 class="text-lg font-heading font-bold text-white mb-2">Business owners</h3>
-                    <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">Answer customers, quote prices, take bookings — automatically.</p>
-                </div>
-                <div class="bento-card rounded-2xl p-8">
-                    <div class="w-12 h-12 bg-[#18181D] border border-[#3A3D47] rounded-xl flex items-center justify-center text-brandOrange mb-5"><i class="fas fa-star"></i></div>
-                    <h3 class="text-lg font-heading font-bold text-white mb-2">Creators</h3>
-                    <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">Keep fans engaged and never miss a DM, even at scale.</p>
-                </div>
-                <div class="bento-card rounded-2xl p-8">
-                    <div class="w-12 h-12 bg-[#18181D] border border-[#3A3D47] rounded-xl flex items-center justify-center text-brandOrange mb-5"><i class="fas fa-briefcase"></i></div>
-                    <h3 class="text-lg font-heading font-bold text-white mb-2">Freelancers</h3>
-                    <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">Handle client questions, scheduling, and follow-ups effortlessly.</p>
-                </div>
-                <div class="bento-card rounded-2xl p-8">
-                    <div class="w-12 h-12 bg-[#18181D] border border-[#3A3D47] rounded-xl flex items-center justify-center text-brandOrange mb-5"><i class="fas fa-face-smile"></i></div>
-                    <h3 class="text-lg font-heading font-bold text-white mb-2">Personal</h3>
-                    <p class="text-[#B4B7C2] font-sans text-sm leading-relaxed">Casual replies to friends in your own voice when you're busy.</p>
-                </div>
+    <!-- WHO -->
+    <section id="who" class="py-28 sm:py-36 px-6 border-t border-line">
+        <div class="max-w-6xl mx-auto">
+            <p data-r class="text-orange font-heading font-semibold text-[13px] tracking-[0.15em] uppercase mb-4">03 — Who it's for</p>
+            <h2 data-r class="text-4xl sm:text-6xl font-extrabold tracking-tight of-text mb-16 max-w-2xl leading-[1.02]">Configured to how you chat</h2>
+            <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div data-r class="tile p-7"><div class="glow"></div><div class="w-11 h-11 rounded-xl bg-orange/10 border border-orange/20 text-orange grid place-items-center mb-5"><i class="fas fa-store"></i></div><h3 class="font-bold text-lg mb-2">Business owners</h3><p class="text-muted text-[14px] leading-relaxed">Answer customers, quote prices, take bookings — automatically.</p></div>
+                <div data-r class="tile p-7"><div class="glow"></div><div class="w-11 h-11 rounded-xl bg-orange/10 border border-orange/20 text-orange grid place-items-center mb-5"><i class="fas fa-star"></i></div><h3 class="font-bold text-lg mb-2">Creators</h3><p class="text-muted text-[14px] leading-relaxed">Keep fans engaged and never miss a DM, even at scale.</p></div>
+                <div data-r class="tile p-7"><div class="glow"></div><div class="w-11 h-11 rounded-xl bg-orange/10 border border-orange/20 text-orange grid place-items-center mb-5"><i class="fas fa-briefcase"></i></div><h3 class="font-bold text-lg mb-2">Freelancers</h3><p class="text-muted text-[14px] leading-relaxed">Handle client questions, scheduling, and follow-ups.</p></div>
+                <div data-r class="tile p-7"><div class="glow"></div><div class="w-11 h-11 rounded-xl bg-orange/10 border border-orange/20 text-orange grid place-items-center mb-5"><i class="fas fa-face-smile"></i></div><h3 class="font-bold text-lg mb-2">Personal</h3><p class="text-muted text-[14px] leading-relaxed">Casual replies to friends in your own voice when you're busy.</p></div>
             </div>
         </div>
     </section>
 
     <!-- CTA -->
-    <section class="py-32 border-t border-[#222329] relative overflow-hidden">
-        <div class="absolute bottom-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-brandOrange/10 rounded-t-[100%] blur-[80px] pointer-events-none"></div>
-        <div class="max-w-3xl mx-auto px-6 text-center relative z-10">
-            <h2 class="text-5xl sm:text-6xl font-heading font-extrabold tracking-tight mb-6 text-white">Start automating today.</h2>
-            <p class="text-[#B4B7C2] font-sans text-xl mb-12 max-w-2xl mx-auto leading-relaxed">Join thousands of modern teams managing their communication via Chaka's intelligent infrastructure.</p>
-            <div class="flex flex-wrap items-center justify-center gap-4">
-                <a href="/login.html?signup=1" class="btn-primary font-heading font-semibold px-8 py-4 rounded-md text-base shadow-xl shadow-brandOrange/20 hover:shadow-brandOrange/40">
-                    Create free account
-                </a>
-                <a href="#sales" class="bg-[#121216] border border-[#3A3D47] hover:border-brandOrange hover:bg-[#18181D] text-white font-heading font-semibold px-8 py-4 rounded-md text-base transition-all">
-                    Contact Sales
-                </a>
-            </div>
+    <section class="py-28 px-6">
+        <div class="max-w-4xl mx-auto text-center relative">
+            <div class="halo" style="position:absolute; top:-120px;"></div>
+            <h2 data-r class="display text-6xl sm:text-8xl font-bold of-text relative">Never miss<br><span class="of-orange">a message again.</span></h2>
+            <p data-r class="text-muted text-lg mt-7 max-w-md mx-auto relative">Link your WhatsApp and let Chaka take it from here.</p>
+            <a data-r href="/login.html?signup=1" class="btn-p relative inline-flex items-center gap-2 mt-10 font-heading font-semibold px-9 py-4 rounded-full text-[15px]">Start free <i class="fas fa-arrow-right text-xs"></i></a>
         </div>
     </section>
 
     <!-- FOOTER -->
-    <footer class="border-t border-[#222329] py-12 bg-[#08080A]">
-        <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
-            <div class="flex items-center gap-2 group">
-                <div class="w-7 h-7 bg-brandOrange text-white border border-[#FC5A38] rounded-md flex items-center justify-center text-[11px] group-hover:shadow-[0_0_10px_rgba(252,90,56,0.4)] transition-shadow"><i class="fas fa-robot"></i></div>
-                <span class="font-heading font-bold text-sm text-white/90">Chaka Inc.</span>
-            </div>
-            <p class="text-[13px] font-sans text-[#555968]">© <span id="year"></span> All rights reserved.</p>
-            <div class="flex items-center gap-8 text-[13px] font-sans font-medium">
-                <a href="#" class="text-[#555968] hover:text-white transition-colors">Terms</a>
-                <a href="#" class="text-[#555968] hover:text-white transition-colors">Privacy</a>
-                <a href="/login.html" class="text-white hover:text-brandOrange transition-colors">Log in</a>
-            </div>
+    <footer class="border-t border-line py-12 px-6">
+        <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-5">
+            <div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-[9px] bg-gradient-to-br from-orange to-[#E8472A] grid place-items-center"><i class="fas fa-bolt text-white text-xs"></i></div><span class="font-heading font-extrabold">Chaka</span></div>
+            <p class="text-[12.5px] text-muted">© <span id="yr"></span> Chaka — WhatsApp, on autopilot.</p>
+            <div class="flex items-center gap-6 text-[13.5px]"><a href="/login.html" class="text-muted hover:text-white transition-colors">Log in</a><a href="/login.html?signup=1" class="text-orange hover:text-orange2 font-medium transition-colors">Start free</a></div>
         </div>
     </footer>
+    </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
     <script>
-        document.getElementById('year').textContent = new Date().getFullYear();
+        document.getElementById('yr').textContent = new Date().getFullYear();
         if (localStorage.getItem('token')) {
-            const nav = document.querySelector('nav .flex.items-center.gap-3');
-            if (nav) nav.innerHTML = '<a href="/index.html" class="btn-primary shadow-[0_0_15px_rgba(252,90,56,0.3)] text-sm font-semibold px-5 py-2.5 rounded-md">Dashboard</a>';
+            const n = document.querySelector('nav .flex.items-center.gap-2');
+            if (n) n.innerHTML = '<a href="/index.html" class="btn-p text-[13.5px] font-heading font-semibold px-4 py-2.5 rounded-full">Open dashboard</a>';
         }
+        const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        if (!reduce && window.gsap) {
+            gsap.registerPlugin(ScrollTrigger);
+            // Native scroll (Chrome's is GPU-accelerated & buttery); scroll-smooth handles anchors.
+            // hero: refined, restrained entrance
+            gsap.set('[data-r]', { opacity: 0, y: 22 });
+            gsap.timeline({ defaults: { ease: 'power3.out', duration: 0.9 } })
+                .to('header [data-r]', { opacity: 1, y: 0, stagger: 0.09 })
+                .from('#demo .msg', { opacity: 0, y: 12, stagger: 0.12, duration: 0.5 }, '-=0.4');
+            // scroll reveals for the rest
+            gsap.utils.toArray('[data-r]').forEach(el => { if (el.closest('header')) return;
+                gsap.to(el, { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out', scrollTrigger: { trigger: el, start: 'top 90%' } }); });
+            // count-up
+            gsap.utils.toArray('[data-count]').forEach(el => { const end = +el.dataset.count;
+                ScrollTrigger.create({ trigger: el, start: 'top 92%', once: true, onEnter: () => gsap.fromTo(el, { innerText: 0 }, { innerText: end, duration: 1.3, ease: 'power2.out', snap: { innerText: 1 } }) }); });
+        } else { document.querySelectorAll('[data-r]').forEach(e => { e.style.opacity = 1; e.style.transform = 'none'; }); }
+
+        // card cursor glow
+        document.querySelectorAll('.tile').forEach(c => c.addEventListener('pointermove', e => { const r = c.getBoundingClientRect(); c.style.setProperty('--x', (e.clientX - r.left) + 'px'); c.style.setProperty('--y', (e.clientY - r.top) + 'px'); }));
     </script>
 </body>
 </html>

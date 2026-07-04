@@ -9,24 +9,25 @@
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             theme: {
                 extend: {
                     fontFamily: {
-                        sans: ['Poppins', 'sans-serif'],
-                        mono: ['Courier New', 'monospace'],
+                        sans: ['Inter', 'sans-serif'],
+                        heading: ['Manrope', 'sans-serif'],
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
                     },
                     colors: {
-                        base: '#18181A',
-                        card: '#222224',
-                        cardHover: '#2A2A2D',
-                        heroBrown: '#3C231D',
+                        base: '#0B0B0E',
+                        card: '#121216',
+                        cardHover: '#18181D',
+                        heroBrown: '#141118',
                         brandOrange: '#FC5A38',
                         brandOrangeHover: '#E04A2A',
-                        textMuted: '#A1A1AA',
-                        borderMuted: '#333333'
+                        textMuted: '#8F919E',
+                        borderMuted: '#222329'
                     },
                     screens: {
                         'xs': '475px',
@@ -41,7 +42,7 @@
         }
 
         body {
-            background-color: #18181A;
+            background-color: #0B0B0E;
             color: #FFFFFF;
             /* Better mobile viewport handling */
             height: 100vh;
@@ -50,6 +51,26 @@
             overflow: hidden;
             touch-action: manipulation;
         }
+
+        /* Premium heading type */
+        h1, h2, h3, h4, h5, h6 { font-family: 'Manrope', sans-serif; letter-spacing: -0.02em; }
+
+        /* Ambient depth: soft brand glow + faint grid behind the whole app */
+        body::before {
+            content: ''; position: fixed; top: -10%; left: 50%; transform: translateX(-50%);
+            width: 900px; height: 600px; pointer-events: none; z-index: 0;
+            background: radial-gradient(ellipse at center, rgba(252,90,56,0.10) 0%, rgba(252,90,56,0) 65%);
+        }
+        body::after {
+            content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0.5;
+            background-image:
+                linear-gradient(to right, rgba(255,255,255,0.018) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.018) 1px, transparent 1px);
+            background-size: 46px 46px;
+            -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 0%, transparent 75%);
+            mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 0%, transparent 75%);
+        }
+        body > * { position: relative; z-index: 1; }
 
         /* Minimalist Scrollbar */
         ::-webkit-scrollbar {
@@ -196,6 +217,52 @@
             overflow-x: hidden;
             max-width: 100vw;
         }
+
+        /* ── Premium polish ───────────────────────────────────────────── */
+        /* Branded scrollbar */
+        ::-webkit-scrollbar-thumb { background: #2A2C35; }
+        ::-webkit-scrollbar-thumb:hover { background: #FC5A38; }
+
+        /* Smooth, tactile interactions on every control */
+        button, a, [onclick], label.cursor-pointer, .touch-target {
+            transition: transform .18s cubic-bezier(.16,1,.3,1), background-color .2s ease, border-color .2s ease, box-shadow .2s ease, color .2s ease;
+        }
+        button:not(:disabled):active, [onclick]:active { transform: scale(0.97); }
+
+        /* Glass card surface — soft top highlight + depth */
+        .glass {
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0) 14%), #121216;
+            border: 1px solid #222329;
+            box-shadow: 0 1px 0 0 rgba(255,255,255,0.03) inset, 0 18px 40px -24px rgba(0,0,0,0.9);
+            transition: border-color .3s ease, box-shadow .3s ease, transform .3s ease;
+        }
+        .glass-hover:hover {
+            border-color: rgba(252,90,56,0.45);
+            box-shadow: 0 1px 0 0 rgba(255,255,255,0.05) inset, 0 26px 60px -28px rgba(252,90,56,0.25);
+            transform: translateY(-2px);
+        }
+
+        /* Stat-tile sheen */
+        .stat-tile { position: relative; overflow: hidden; }
+        .stat-tile::after {
+            content: ''; position: absolute; top: -40%; right: -20%; width: 130px; height: 130px;
+            background: radial-gradient(circle, rgba(252,90,56,0.16), transparent 70%); pointer-events: none;
+        }
+
+        /* Brand glow for the primary CTA */
+        .glow-orange { box-shadow: 0 6px 22px -6px rgba(252,90,56,0.55), 0 0 0 1px rgba(252,90,56,0.20) inset; }
+        .glow-orange:hover { box-shadow: 0 10px 30px -6px rgba(252,90,56,0.7), 0 0 0 1px rgba(252,90,56,0.35) inset; }
+
+        /* Section heading accent bar */
+        .accent-bar { box-shadow: 0 0 14px rgba(252,90,56,0.6); }
+
+        /* Animated live dot */
+        @keyframes livePulse { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.5);} 50% { opacity:.6; box-shadow: 0 0 0 5px rgba(34,197,94,0);} }
+        .live-dot { animation: livePulse 2s ease-in-out infinite; }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+        }
     </style>
 </head>
 
@@ -337,7 +404,7 @@
 
                 <!-- Global Logic Engine -->
                 <div id="control-panel"
-                    class="bg-heroBrown rounded-[28px] md:rounded-[36px] p-6 md:p-8 mb-8 flex flex-col xl:flex-row items-center xl:items-start justify-center xl:justify-between gap-8 lg:gap-12 opacity-50 pointer-events-none transition-opacity duration-300 border border-brandOrange/10 shadow-xl overflow-hidden w-full max-w-full">
+                    class="glass bg-gradient-to-br from-heroBrown via-card to-card rounded-[28px] md:rounded-[36px] p-6 md:p-8 mb-8 flex flex-col xl:flex-row items-center xl:items-start justify-center xl:justify-between gap-8 lg:gap-12 opacity-50 pointer-events-none transition-opacity duration-300 border border-brandOrange/15 overflow-hidden w-full max-w-full">
 
                     <div class="w-full xl:flex-1 flex flex-col h-full min-w-0">
                         <h3 class="text-lg md:text-xl font-bold mb-4 text-center xl:text-left text-white/90">Global
@@ -347,7 +414,7 @@
                             placeholder="Core intelligence instructions..."></textarea>
 
                         <button onclick="saveGlobal()"
-                            class="mt-6 bg-brandOrange hover:bg-brandOrangeHover text-white font-bold rounded-full px-12 py-4 w-full sm:w-fit transition-all text-[15px] flex items-center justify-center gap-2 shadow-lg hover:scale-[1.02] active:scale-95 mx-auto xl:mx-0 whitespace-nowrap">
+                            class="glow-orange mt-6 bg-brandOrange hover:bg-brandOrangeHover text-white font-bold rounded-full px-12 py-4 w-full sm:w-fit transition-all text-[15px] flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95 mx-auto xl:mx-0 whitespace-nowrap">
                             Compile Persona <i class="fas fa-microchip"></i>
                         </button>
                     </div>
@@ -569,7 +636,7 @@
                 <!-- Health Cards -->
                 <div class="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
                     <div
-                        class="bg-card rounded-[24px] p-4 border border-borderMuted/50 hover:border-brandOrange/30 transition-colors shadow-sm">
+                        class="glass glass-hover stat-tile rounded-[24px] p-4">
                         <div
                             class="w-8 h-8 rounded-full bg-brandOrange/10 flex items-center justify-center text-brandOrange mb-3 border border-brandOrange/20">
                             <i class="fas fa-database text-[10px]"></i>
@@ -579,7 +646,7 @@
                                 class="text-[10px] text-textMuted font-bold mb-1">MB</span></h4>
                     </div>
                     <div
-                        class="bg-card rounded-[24px] p-4 border border-borderMuted/50 hover:border-[#10b981]/30 transition-colors shadow-sm">
+                        class="glass glass-hover rounded-[24px] p-4">
                         <div
                             class="w-8 h-8 rounded-full bg-[#10b981]/10 flex items-center justify-center text-[#10b981] mb-3 border border-[#10b981]/20">
                             <i class="fas fa-ghost text-[10px]"></i>
