@@ -2967,10 +2967,52 @@ io.on('connection', (socket) => {
             return;
         }
         const globalId = `${userId}_${id}`;
-        if (!sessions.has(globalId)) { 
-            startSession(userId, id); 
-            socket.emit('session_created', id); 
-        } 
+        if (!sessions.has(globalId)) {
+            startSession(userId, id);
+            socket.emit('session_created', id);
+        }
+    });
+
+    // --- ONE-DEVICE LINKING: pairing code instead of QR ---
+    // Rides on the existing QR-stage socket (the exact state Baileys needs), so the
+    // session lifecycle is untouched. User types the code into WhatsApp on the SAME
+    // phone: Settings → Linked Devices → Link a Device → "Link with phone number instead".
+    socket.on('request_pairing_code', async (data) => {
+        if (!userId || !data?.sessionId || !data?.phone) return;
+        const globalId = `${userId}_${data.sessionId}`;
+        const session = sessions.get(globalId);
+        const fail = (error) => socket.emit('pairing_code', { sessionId: data.sessionId, error });
+        try {
+            // Normalize: digits only; drop international 00 prefix; reject junk early.
+            let phone = String(data.phone).replace(/[^0-9]/g, '');
+            if (phone.startsWith('00')) phone = phone.slice(2);
+            if (phone.length < 8 || phone.length > 15) {
+                return fail('Enter your full number WITH country code (e.g. 2348031234567 — no + or spaces).');
+            }
+            if (phone.startsWith('0')) {
+                return fail('That looks like a local number. Start with your country code (e.g. 234... not 0...).');
+            }
+            if (!session || !session.sock) {
+                return fail('Node is not running yet. Start it first (the QR screen), then request a code.');
+            }
+            if (session.sock.authState?.creds?.registered) {
+                return fail('This node is already linked to a WhatsApp account.');
+            }
+            // Rate-limit: one code per 20s per node (WhatsApp throttles aggressive requests).
+            const now = Date.now();
+            if (session.lastPairingReq && now - session.lastPairingReq < 20000) {
+                return fail('Please wait a few seconds before requesting another code.');
+            }
+            session.lastPairingReq = now;
+
+            const code = await session.sock.requestPairingCode(phone);
+            const pretty = code && code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+            socket.emit('pairing_code', { sessionId: data.sessionId, code: pretty });
+            io.emit('log', { sessionId: data.sessionId, msg: `🔗 Pairing code issued (${phone.slice(0, 5)}…)` });
+        } catch (e) {
+            console.error(`[${globalId}] Pairing code error:`, e.message);
+            fail('Could not generate a code — make sure the node just started (QR visible), then try again.');
+        }
     });
 
     socket.on('delete_session', (id) => {

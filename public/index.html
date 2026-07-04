@@ -529,6 +529,35 @@
                     </div>
                     <p class="text-textMuted text-sm font-semibold">Connect Node: <span id="qr-target-name"
                             class="text-brandOrange ml-1 underline decoration-2">...</span></p>
+
+                    <!-- ONE-DEVICE LINKING (pairing code) -->
+                    <div class="w-full max-w-sm mt-6 text-center">
+                        <button onclick="togglePairing()" id="pairing-toggle"
+                            class="text-sm text-brandOrange hover:text-brandOrangeHover font-semibold transition-colors">
+                            <i class="fas fa-mobile-screen-button mr-1"></i> Only have this one device? Link with your phone number
+                        </button>
+                        <div id="pairing-panel" class="hidden mt-4 bg-base/60 border border-borderMuted rounded-2xl p-5 text-left">
+                            <label class="text-[11px] text-textMuted font-semibold uppercase tracking-wider">Your WhatsApp number (with country code)</label>
+                            <div class="flex gap-2 mt-2">
+                                <input id="pairing-phone" type="tel" inputmode="numeric" placeholder="e.g. 2348031234567"
+                                    class="flex-1 bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-brandOrange/60" />
+                                <button onclick="requestPairingCode()" id="pairing-btn"
+                                    class="bg-brandOrange hover:bg-brandOrangeHover text-white font-bold px-4 rounded-xl text-sm transition-colors whitespace-nowrap">Get code</button>
+                            </div>
+                            <p class="text-[11px] text-textMuted mt-2">No + or spaces — e.g. Nigeria <span class="text-white/70">234…</span>, US <span class="text-white/70">1…</span>, UK <span class="text-white/70">44…</span></p>
+                            <p id="pairing-error" class="text-xs text-red-400 mt-2 hidden"></p>
+                            <div id="pairing-result" class="hidden mt-4 text-center">
+                                <div id="pairing-code" class="font-mono text-3xl font-extrabold tracking-[0.2em] text-white bg-black/40 border border-brandOrange/30 rounded-2xl py-4 select-all"></div>
+                                <ol class="text-left text-xs text-textMuted mt-4 space-y-1.5 list-decimal list-inside">
+                                    <li>Open <span class="text-white/80">WhatsApp</span> on this phone</li>
+                                    <li>Go to <span class="text-white/80">Settings → Linked Devices → Link a Device</span></li>
+                                    <li>Tap <span class="text-white/80">"Link with phone number instead"</span></li>
+                                    <li>Enter the code above — done ✅</li>
+                                </ol>
+                                <p class="text-[11px] text-textMuted mt-3">Code expired? Just tap "Get code" again.</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Target Configuration -->
@@ -1126,6 +1155,36 @@
             qrContainer.innerHTML = `<img src="${data.qr}" class="w-full h-full object-contain">`;
             qrSection.classList.remove('hidden');
         });
+
+        // --- ONE-DEVICE LINKING (pairing code) ---
+        function togglePairing() {
+            document.getElementById('pairing-panel').classList.toggle('hidden');
+        }
+        function requestPairingCode() {
+            const phone = document.getElementById('pairing-phone').value.trim();
+            const errEl = document.getElementById('pairing-error');
+            errEl.classList.add('hidden');
+            if (!activeSessionId) { showToast('Select or start a node first'); return; }
+            if (!phone) { errEl.textContent = 'Enter your WhatsApp number first.'; errEl.classList.remove('hidden'); return; }
+            const btn = document.getElementById('pairing-btn');
+            btn.disabled = true; btn.textContent = 'Requesting…';
+            setTimeout(() => { btn.disabled = false; btn.textContent = 'Get code'; }, 4000);
+            socket.emit('request_pairing_code', { sessionId: activeSessionId, phone });
+        }
+        socket.on('pairing_code', (d) => {
+            if (d.sessionId !== activeSessionId) return;
+            const errEl = document.getElementById('pairing-error');
+            const btn = document.getElementById('pairing-btn');
+            btn.disabled = false; btn.textContent = 'Get code';
+            if (d.error) { errEl.textContent = d.error; errEl.classList.remove('hidden'); return; }
+            errEl.classList.add('hidden');
+            document.getElementById('pairing-code').textContent = d.code;
+            document.getElementById('pairing-result').classList.remove('hidden');
+        });
+        // On phones (one-device users), open the pairing panel by default.
+        if (/Android|iPhone|iPad/i.test(navigator.userAgent)) {
+            document.getElementById('pairing-panel')?.classList.remove('hidden');
+        }
 
         // Agents: refresh leads/alerts live as the AI captures them.
         socket.on('lead_update', () => { if (!document.getElementById('leads-panel')?.classList.contains('hidden')) loadLeads(); });
