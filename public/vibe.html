@@ -123,7 +123,11 @@
 
         function approveDraft(index) {
             const draft = draftList[index];
-            socket.emit('approve_draft', draft);
+            // Send the (possibly edited) text + the AI's original so the server can
+            // learn from any changes the owner made before approving.
+            const edited = (document.getElementById('draft-edit-' + index)?.value || draft.draftText).trim();
+            if (!edited) return;
+            socket.emit('approve_draft', { ...draft, draftText: edited, originalDraft: draft.draftText });
             removeDraft(index);
         }
 
@@ -168,13 +172,14 @@
                     </div>
 
                     <div class="bg-brandOrange/5 p-3 rounded-xl border border-brandOrange/20 text-sm">
-                        <p class="text-brandOrange text-xs mb-1 uppercase font-semibold tracking-wider">AI Proposes:</p>
-                        <p class="text-white">${draft.draftText.replace(/\n/g, '<br>')}</p>
+                        <p class="text-brandOrange text-xs mb-1 uppercase font-semibold tracking-wider">AI Proposes — edit freely, it learns from your changes:</p>
+                        <textarea id="draft-edit-${idx}" rows="3"
+                            class="w-full bg-black/30 border border-borderMuted/60 rounded-lg p-2.5 text-sm text-white resize-y outline-none focus:border-brandOrange/60"></textarea>
                     </div>
 
                     <div class="flex gap-3 mt-auto pt-2">
                         <button onclick="approveDraft(${idx})" class="flex-1 bg-brandOrange hover:bg-brandOrangeHover text-white py-2 rounded-xl text-sm font-bold transition-colors shadow-lg shadow-brandOrange/20">
-                            Approve
+                            Send
                         </button>
                         <button onclick="rejectDraft(${idx})" class="flex-1 bg-white/5 hover:bg-white/10 text-white py-2 rounded-xl text-sm font-bold transition-colors border border-white/10">
                             Discard
@@ -182,6 +187,10 @@
                     </div>
                 `;
                 draftsContainer.appendChild(card);
+                // Set via .value (not innerHTML interpolation) so any characters in the
+                // AI text can't break the markup.
+                const ta = card.querySelector('textarea');
+                if (ta) ta.value = draft.draftText;
             });
         }
     </script>

@@ -346,6 +346,12 @@ async function initDB() {
             owner_text TEXT,    -- what the human owner actually wrote right after
             created_at INTEGER
         );
+        CREATE TABLE IF NOT EXISTS learned_rules (
+            user_id TEXT PRIMARY KEY,
+            rules TEXT,             -- distilled standing preferences (plain bullet list)
+            feedback_seen INTEGER,  -- highest reply_feedback.id already distilled
+            updated_at INTEGER
+        );
     `);
 
     // --- MIGRATION: ADD USER_ID COLUMNS (IGNORES IF EXIST) ---
@@ -922,6 +928,34 @@ async function orchestrateAIResponse(userId, sessionId, systemPrompt, userPrompt
     console.error(`[${sessionId}] 🚨 AI exhausted all rounds — giving up on this message (owner will be notified).`);
     io.emit('log', { sessionId, msg: "🚨 AI couldn't generate a reply after all retries." });
     return null;
+}
+
+// --- SELF-REVIEW: distill owner corrections into standing rules ---
+// Periodically (per user, only when there's NEW feedback) the AI studies every case
+// where a human owner stepped in or edited a draft, and compresses them into a short
+// list of standing preferences. Raw examples fade with recency; distilled rules are
+// permanent — this is how the assistant genuinely improves over time.
+async function distillLessons() {
+    try {
+        const users = await db.all(`SELECT user_id, COUNT(*) c, MAX(id) mx FROM reply_feedback GROUP BY user_id HAVING c >= 3`);
+        for (const u of users) {
+            const prev = await db.get(`SELECT feedback_seen FROM learned_rules WHERE user_id = ?`, [u.user_id]);
+            if (prev && prev.feedback_seen >= u.mx) continue; // nothing new to learn
+
+            const rows = await db.all(`SELECT bot_text, owner_text FROM reply_feedback WHERE user_id = ? ORDER BY id DESC LIMIT 20`, [u.user_id]);
+            const examples = rows.map(r => `AI wrote: "${(r.bot_text || '').slice(0, 180)}"\nOwner wrote instead: "${(r.owner_text || '').slice(0, 180)}"`).join('\n---\n');
+            const sys = `You are a coach improving a WhatsApp AI assistant. Below are cases where the assistant's reply was corrected or replaced by its human owner. Distill the owner's preferences into AT MOST 5 short imperative rules (tone, length, wording, emoji use, language choice, what to offer or avoid). Only include rules clearly supported by the examples. Output ONLY the rules, one per line, each starting with "- ". No preamble.`;
+
+            const out = await tryDeepSeekFailover(u.user_id, 'self-review', sys, examples, { temperature: 1.0 });
+            if (out && out.trim().startsWith('-')) {
+                await db.run(`INSERT INTO learned_rules (user_id, rules, feedback_seen, updated_at) VALUES (?,?,?,?)
+                              ON CONFLICT(user_id) DO UPDATE SET rules=excluded.rules, feedback_seen=excluded.feedback_seen, updated_at=excluded.updated_at`,
+                    [u.user_id, out.trim().slice(0, 1200), u.mx, Math.floor(Date.now() / 1000)]);
+                console.log(`🧠 [SELF-REVIEW] Distilled ${rows.length} corrections into standing rules for user ${u.user_id.slice(0, 8)}…`);
+            }
+            await delay(3000); // gentle pacing between users
+        }
+    } catch (e) { console.error('Self-review failed:', e.message); }
 }
 
 async function tryQwenFailover(userId, sessionId, systemPrompt, userPrompt) {
@@ -2262,6 +2296,12 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         // then account-wide.
         let learnContext = '';
         try {
+            // Distilled standing rules (compounded from ALL past corrections) — permanent.
+            const ruleRow = await db.get(`SELECT rules FROM learned_rules WHERE user_id = ?`, [userId]);
+            if (ruleRow?.rules) {
+                learnContext += `\n\n[YOUR OWNER'S STANDING PREFERENCES — learned from every time they corrected you. Follow these strictly:\n${ruleRow.rules}]`;
+            }
+            // Plus the freshest raw examples (recency signal), this contact first.
             const lessons = await db.all(
                 `SELECT bot_text, owner_text FROM reply_feedback WHERE user_id = ?
                  ORDER BY (contact_id = ?) DESC, created_at DESC LIMIT 3`,
@@ -2269,7 +2309,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             if (lessons.length) {
                 const lines = lessons.map(l =>
                     `- You said: "${(l.bot_text || '').slice(0, 140)}" → your owner then stepped in and wrote: "${(l.owner_text || '').slice(0, 140)}"`).join('\n');
-                learnContext = `\n\n[LEARNED FROM YOUR OWNER — when they stepped into chats, this is how THEY handled it. Match their judgment, tone and wording style (do not copy verbatim):\n${lines}]`;
+                learnContext += `\n\n[LEARNED FROM YOUR OWNER — when they stepped into chats, this is how THEY handled it. Match their judgment, tone and wording style (do not copy verbatim):\n${lines}]`;
             }
         } catch (e) { /* learning injection is best-effort */ }
 
@@ -3061,7 +3101,18 @@ io.on('connection', (socket) => {
                 await session.sock.sendPresenceUpdate('composing', data.jid);
                 await delay(500);
                 await session.sock.sendMessage(data.jid, { text: data.draftText });
-                
+                // Keep the echo of this send out of writing-style samples (it's AI text,
+                // not the owner's own typing — even when owner-approved).
+                noteBotSentText(data.sessionId, data.contactId, data.draftText);
+
+                // GOLD-STANDARD LEARNING: the owner EDITED the AI's draft before sending.
+                // That diff is the purest correction signal we get — store it.
+                if (data.originalDraft && data.originalDraft.trim() !== data.draftText.trim()) {
+                    await db.run(`INSERT INTO reply_feedback (user_id, session_id, contact_id, bot_text, owner_text, created_at) VALUES (?,?,?,?,?,?)`,
+                        [userId, data.sessionId, data.contactId, data.originalDraft.slice(0, 400), data.draftText.slice(0, 400), Math.floor(Date.now() / 1000)]);
+                    console.log(`[${data.sessionId}] 🧠 Learned from draft edit.`);
+                }
+
                 const botId = 'BOT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
                 await db.run(`INSERT INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [botId, data.sessionId, data.contactId, userId, data.draftText, MY_NAME, Math.floor(Date.now() / 1000), new Date().toISOString(), 1, null]);
@@ -3114,6 +3165,10 @@ server.listen(PORT, '0.0.0.0', async () => {
     setTimeout(runBackup, 60000);            // first backup a minute after boot
     setInterval(runBackup, 6 * 3600 * 1000); // check every 6h (no-ops if today's exists)
 
+    // --- SELF-REVIEW SCHEDULER (learning flywheel) ---
+    setTimeout(() => distillLessons().catch(() => {}), 120000);          // first pass 2 min after boot
+    setInterval(() => distillLessons().catch(() => {}), 12 * 3600 * 1000); // then every 12h (skips users with no new feedback)
+
     // --- START CRON-BRAIN (PHASE 3) ---
     setInterval(async () => {
         try {
@@ -3128,7 +3183,8 @@ server.listen(PORT, '0.0.0.0', async () => {
                                 ? sched.contact_id 
                                 : `${sched.contact_id}@s.whatsapp.net`;
                     await session.sock.sendMessage(jid, { text: sched.message });
-                    
+                    noteBotSentText(sched.session_id, sched.contact_id, sched.message); // keep out of style samples
+
                     // Save as BOT_CRON
                     await db.run(`INSERT INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         ['BOT_CRON_' + Date.now(), sched.session_id, sched.contact_id, sched.user_id, sched.message, MY_NAME, Math.floor(Date.now() / 1000), new Date().toISOString(), 1]);
