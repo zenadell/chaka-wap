@@ -1167,8 +1167,14 @@
             if (!activeSessionId) { showToast('Select or start a node first'); return; }
             if (!phone) { errEl.textContent = 'Enter your WhatsApp number first.'; errEl.classList.remove('hidden'); return; }
             const btn = document.getElementById('pairing-btn');
-            btn.disabled = true; btn.textContent = 'Requesting…';
-            setTimeout(() => { btn.disabled = false; btn.textContent = 'Get code'; }, 4000);
+            btn.disabled = true; btn.textContent = 'Generating…';
+            // Requesting a code restarts the node on a fresh socket, so the code takes a few
+            // seconds to arrive. Show a placeholder and clear any old (now-invalid) code.
+            const result = document.getElementById('pairing-result');
+            const codeEl = document.getElementById('pairing-code');
+            result.classList.remove('hidden');
+            codeEl.innerHTML = '<span class="text-lg text-textMuted tracking-normal font-sans">Generating code…</span>';
+            setTimeout(() => { btn.disabled = false; btn.textContent = 'Get code'; }, 10000);
             socket.emit('request_pairing_code', { sessionId: activeSessionId, phone });
         }
         socket.on('pairing_code', (d) => {

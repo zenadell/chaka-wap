@@ -2448,9 +2448,9 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
     }
 }
 
-async function startSession(userId, sessionId) {
+async function startSession(userId, sessionId, pairingPhone = null) {
     const globalId = `${userId}_${sessionId}`;
-    
+
     // Safety guard for malformed IDs
     if (!sessionId || sessionId === 'undefined' || !userId) {
         console.error(`[SYSTEM] Aborting startSession for invalid ID: user=${userId}, session=${sessionId}`);
@@ -2508,6 +2508,10 @@ async function startSession(userId, sessionId) {
     sessions.get(globalId).sock = sock;
     sessions.get(globalId).store = store;
     sessions.get(globalId).phonebook = phonebook;
+    // One-device linking: if a phone was supplied, we'll request a pairing code on this
+    // fresh socket's first QR event (see connection.update) — exactly once.
+    sessions.get(globalId).pairingPhone = pairingPhone;
+    sessions.get(globalId).pairingRequested = false;
 
     // --- CONNECTION WATCHDOG --- (Ensures we don't hang in 'connecting' forever)
     if (sessions.get(globalId).handshakeTimer) clearTimeout(sessions.get(globalId).handshakeTimer);
@@ -2533,7 +2537,29 @@ async function startSession(userId, sessionId) {
 
         if (qr) {
             if (session) session.connectionState = 'qr_ready';
-            qrcode.toDataURL(qr, (err, url) => io.emit('qr_code', { sessionId, qr: url }));
+            // ONE-DEVICE LINKING: the first QR means the socket is open and can send
+            // nodes — the correct (and only reliable) moment to request a pairing code.
+            // Requesting on a long-lived, QR-rotating socket is what caused WhatsApp's
+            // "Couldn't link device" error. We do it once per fresh socket.
+            if (session && session.pairingPhone && !session.pairingRequested && !sock.authState?.creds?.registered) {
+                session.pairingRequested = true;
+                sock.requestPairingCode(session.pairingPhone).then(code => {
+                    const pretty = code && code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+                    io.emit('pairing_code', { sessionId, code: pretty });
+                    io.emit('log', { sessionId, msg: `🔗 Pairing code issued — enter it in WhatsApp now.` });
+                }).catch(err => {
+                    console.error(`[${globalId}] Pairing code error:`, err.message);
+                    // Fall back to QR mode; user can tap "Get code" again to retry fresh.
+                    session.pairingPhone = null;
+                    session.pairingRequested = false;
+                    io.emit('pairing_code', { sessionId, error: 'Could not generate a code — tap "Get code" again.' });
+                });
+                return; // in pairing mode, don't also push the QR image
+            }
+            // In pairing mode we never show a QR — later QR rotations would confuse the user.
+            if (!session.pairingPhone) {
+                qrcode.toDataURL(qr, (err, url) => io.emit('qr_code', { sessionId, qr: url }));
+            }
         }
 
         if (connection === 'close') {
@@ -2980,7 +3006,7 @@ io.on('connection', (socket) => {
     socket.on('request_pairing_code', async (data) => {
         if (!userId || !data?.sessionId || !data?.phone) return;
         const globalId = `${userId}_${data.sessionId}`;
-        const session = sessions.get(globalId);
+        const existing = sessions.get(globalId);
         const fail = (error) => socket.emit('pairing_code', { sessionId: data.sessionId, error });
         try {
             // Normalize: digits only; drop international 00 prefix; reject junk early.
@@ -2992,26 +3018,34 @@ io.on('connection', (socket) => {
             if (phone.startsWith('0')) {
                 return fail('That looks like a local number. Start with your country code (e.g. 234... not 0...).');
             }
-            if (!session || !session.sock) {
-                return fail('Node is not running yet. Start it first (the QR screen), then request a code.');
-            }
-            if (session.sock.authState?.creds?.registered) {
+            if (existing?.sock?.authState?.creds?.registered) {
                 return fail('This node is already linked to a WhatsApp account.');
             }
-            // Rate-limit: one code per 20s per node (WhatsApp throttles aggressive requests).
+            // Rate-limit: one request per 20s per node.
             const now = Date.now();
-            if (session.lastPairingReq && now - session.lastPairingReq < 20000) {
+            if (existing?.lastPairingReq && now - existing.lastPairingReq < 20000) {
                 return fail('Please wait a few seconds before requesting another code.');
             }
-            session.lastPairingReq = now;
 
-            const code = await session.sock.requestPairingCode(phone);
-            const pretty = code && code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
-            socket.emit('pairing_code', { sessionId: data.sessionId, code: pretty });
-            io.emit('log', { sessionId: data.sessionId, msg: `🔗 Pairing code issued (${phone.slice(0, 5)}…)` });
+            // A pairing code MUST be requested on a fresh, just-opened socket — requesting
+            // on a QR-rotating socket triggers WhatsApp's "Couldn't link device". So we tear
+            // the current socket down and start a clean one in pairing mode; the code is then
+            // issued on its first QR event (see connection.update).
+            if (existing) {
+                try { if (existing.handshakeTimer) clearTimeout(existing.handshakeTimer); } catch (e) {}
+                try { if (existing.watchdogTimer) clearInterval(existing.watchdogTimer); } catch (e) {}
+                try { if (existing.sock) existing.sock.end(undefined); } catch (e) {}
+                sessions.delete(globalId);
+            }
+            io.emit('log', { sessionId: data.sessionId, msg: `🔗 Generating pairing code…` });
+            setTimeout(() => {
+                startSession(userId, data.sessionId, phone);
+                const s = sessions.get(globalId);
+                if (s) s.lastPairingReq = Date.now();
+            }, 800);
         } catch (e) {
             console.error(`[${globalId}] Pairing code error:`, e.message);
-            fail('Could not generate a code — make sure the node just started (QR visible), then try again.');
+            fail('Could not generate a code — try again in a moment.');
         }
     });
 
