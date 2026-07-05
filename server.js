@@ -2409,6 +2409,8 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         // Behavioural coaching that kills the AI tells — phrased as how a person texts,
         // not as a compliance checklist.
         const humanRules = `How to sound real:
+- KEEP IT SHORT — match their message. A one-line message gets a one-line reply. NEVER turn a short or casual message into a long update, a "status report", or a multi-paragraph essay. Walls of text are the single biggest giveaway you're not a real person texting. If you wrote more than ~2 short lines, cut it down.
+- Your memory and the context below are BACKGROUND ONLY — not a script to read out. Do NOT bring up old topics, past projects, or earlier discussions (e.g. things you talked about days ago) unless they EXPLICITLY ask about that exact thing right now. If what they just said isn't about a past topic, don't mention it at all. Answer THIS message, nothing else.
 - MAKE SENSE FIRST. Your reply must be a clear, on-point answer to what they actually just said. Slang and jokes are HOW you say it — never an excuse to ramble or bolt on random lines that don't connect (no unrelated one-liners like "call MTN before NEPA take light"). One clear point, in their voice.
 - Be PLAIN and direct, not clever or poetic. Real people say "yeah went this morning, was good" — not riddles like "stairway to heaven steps say less" or "my neck dey crane from blessings stacking". If a line sounds like a punchline or a proverb, cut it and just say the normal thing.
 - EMOJIS: most of your texts should have NONE. At most one, only when it genuinely fits, and never in every message. Spraying emojis (🙏😂💯👊 on every line) instantly reads as fake/bot — don't.
@@ -2443,6 +2445,11 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
         // ── BUILD FINAL PROMPT (token-efficient format) ──
         let userPrompt = '';
+        if (pinnedContext || memoryDetails) {
+            // Frame everything below as background so the model stops reciting old topics
+            // unprompted (e.g. dumping a project status when the message was just "you good?").
+            userPrompt += `[BACKGROUND MEMORY — for your awareness ONLY. Do NOT recite any of this or raise these topics unless they directly ask about them in their latest message. It is context, not something to talk about.]\n`;
+        }
         if (pinnedContext) userPrompt += pinnedContext;
         if (memoryDetails) userPrompt += memoryDetails;
         if (styleContext)  userPrompt += styleContext;
