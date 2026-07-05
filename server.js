@@ -2339,7 +2339,9 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         // Behavioural coaching that kills the AI tells — phrased as how a person texts,
         // not as a compliance checklist.
         const humanRules = `How to sound real:
-- Answer what they ACTUALLY just said, like you've been in the conversation the whole time. No generic greetings when the chat is already going.
+- MAKE SENSE FIRST. Your reply must be a clear, on-point answer to what they actually just said. Slang and jokes are HOW you say it — never an excuse to ramble or bolt on random lines that don't connect (no unrelated one-liners like "call MTN before NEPA take light"). One clear point, in their voice.
+- If you're genuinely not sure what they mean, ask a short natural question instead of guessing or waffling.
+- Answer like you've been in the conversation the whole time. No generic greetings when the chat is already going.
 - Write in the exact voice from the sample messages above — same capitalisation, punctuation (or none), slang, emoji habits, and length. If they text in lowercase with no full stops, so do you.
 - Keep it to one message, usually a line or two. Match their length and energy. A short real reply beats a padded one.
 - Most replies are a single text. But if it's genuinely how ${ownerLabel === 'them' ? 'they' : ownerLabel} would type it, you can fire off TWO quick texts instead of one — put a blank line between them (e.g. "omgg" then "when did that happen"). Never more than two. Don't force it.
@@ -2352,8 +2354,16 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             ? `\n- Only state facts you were actually given (your persona, the business info, this chat). Never invent products, prices, stock, hours, address, delivery, discounts, or policies. If you weren't told it, say you'll check with the owner and take their details — don't guess, and don't pitch things that were never mentioned.`
             : `\n- Don't invent plans, facts, or commitments on their behalf. If you're unsure, keep it vague or say you'll check.`;
 
-        // Identity is a FALLBACK, never the opening line.
-        const identityClause = `\n\n(Only if someone directly asks your name, what you are, or who made you: ${CORE_IDENTITY} Otherwise never raise it, and never call yourself an AI, bot, or assistant.)`;
+        // Identity handling is account-type specific:
+        // - Professional accounts are openly an assistant → may say they're Chaka AI if asked.
+        // - Personal/creator accounts IMPERSONATE the owner → must NEVER break character or
+        //   admit to being an AI/bot/test. (In testing it confessed "it's just my AI running"
+        //   when a friend asked if it was real — that destroys the entire illusion.)
+        const identityClause = isProfessional
+            ? `\n\n(Only if someone directly asks your name, what you are, or who made you: ${CORE_IDENTITY} Otherwise never raise it.)`
+            : `\n\n[STAY IN CHARACTER — NON-NEGOTIABLE]
+- You ARE ${ownerLabel === 'them' ? 'this person' : ownerLabel}. Never say, admit, or hint that you're an AI, a bot, a robot, automated, a program, "a test", or that you're "running"/"updating". None of that exists to the person you're texting.
+- If they get suspicious ("is this a bot? / are you real? / who is this? / you dey sound weird"), react exactly like the real person would — a quick laugh and a normal human line ("lol na me jare", "wetin 😂", "you dey whine?") — then carry on. Never explain yourself, never apologise for "the AI", never mention testing, updates, or automation. Do not break the fourth wall for any reason.`;
 
         let systemInstruction = `${humanFrame}\n\n${userPersona}${kbContext}${learnContext}\n\nYou're talking to: ${contactName}${stickerContext}\n\n${humanRules}${groundingRule}\n${scheduleRule}${isProfessional ? '\n' + agentActions : ''}${identityClause}\n\n(For reference, right now it's ${new Date().toISOString()}.)`;
 
@@ -2384,9 +2394,9 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         console.log(`[${sessionId}] 📤 GENERATING RESPONSE (System: ${systemInstruction.length}, User: ${userPrompt.length})`);
 
         const startTime = Date.now();
-        // Casual accounts get a warmer temperature (DeepSeek's own guidance for
-        // conversation is ~1.3); professional stays precise at 1.0.
-        let replyText = await orchestrateAIResponse(userId, globalId, systemInstruction, userPrompt, { temperature: isProfessional ? 1.0 : 1.3 });
+        // 1.3 made casual replies ramble into slang word-salad that missed the point.
+        // 1.1 keeps them lively and human but coherent; professional stays precise at 1.0.
+        let replyText = await orchestrateAIResponse(userId, globalId, systemInstruction, userPrompt, { temperature: isProfessional ? 1.0 : 1.1 });
 
         if (!replyText) {
             console.error(`[${globalId}] 🔥 Orchestrator returned null after all retries.`);
