@@ -3193,8 +3193,38 @@ io.on('connection', (socket) => {
             await db.run(`UPDATE users SET history_consent = 1 WHERE id = ?`, [userId]);
             if (session) session.historyConsent = 1;
 
-            // If history is still trickling in, give it a couple of seconds to settle so
-            // the download isn't empty. (Late arrivals also save directly now consent=1.)
+            // ── ON-DEMAND FETCH (pairing-safe deep history) ──
+            // Actively request past messages for the chats we know about. Unlike the on-link
+            // RECENT sync, fetchMessageHistory works on ANY connected session (so the current
+            // node benefits without re-linking) and never touches the registration handshake.
+            // Results stream back via messaging-history.set and save directly (consent=1).
+            try {
+                const sock = session?.sock;
+                const store = session?.store;
+                const tsNum = (m) => { const t = m?.messageTimestamp; return typeof t === 'number' ? t : (t?.toNumber ? t.toNumber() : Number(t) || 0); };
+                if (sock && typeof sock.fetchMessageHistory === 'function' && store?.data?.messages) {
+                    const chats = Object.entries(store.data.messages)
+                        .filter(([jid]) => jid.endsWith('@s.whatsapp.net'))
+                        .map(([jid, msgs]) => {
+                            const valid = (msgs || []).filter(m => m?.key?.id && tsNum(m));
+                            if (!valid.length) return null;
+                            const oldest = valid.reduce((a, b) => tsNum(a) <= tsNum(b) ? a : b);
+                            return { jid, oldestKey: oldest.key, oldestTs: tsNum(oldest), latestTs: Math.max(...valid.map(tsNum)) };
+                        })
+                        .filter(Boolean)
+                        .sort((a, b) => b.latestTs - a.latestTs)
+                        .slice(0, 20);
+                    for (let i = 0; i < chats.length; i++) {
+                        const c = chats[i];
+                        try { await sock.fetchMessageHistory(30, c.oldestKey, c.oldestTs * 1000); } catch (e) { /* per-chat best effort */ }
+                        io.to(userId).emit('history_progress', { sessionId: data.sessionId, done: i + 1, total: chats.length, contactName: session.phonebook?.[c.jid] || c.jid.split('@')[0] });
+                        await delay(500);
+                    }
+                    if (chats.length) await delay(8000); // let the requested history stream in and save
+                }
+            } catch (e) { console.error('on-demand history fetch failed:', e.message); }
+
+            // If the on-link RECENT sync is still trickling in, give it a moment to settle.
             if (session && (session.pendingHistory?.length || 0) < 40) {
                 io.to(userId).emit('history_progress', { sessionId: data.sessionId, done: 0, total: 0, contactName: 'Fetching your chats…' });
                 await delay(5000);
@@ -3229,8 +3259,19 @@ io.on('connection', (socket) => {
                 await delay(120); // let the animation breathe
             }
             if (session) session.pendingHistory = []; // free the RAM buffer
-            io.to(userId).emit('history_complete', { sessionId: data.sessionId, contacts: total, messages: totalMsgs });
-            io.to(userId).emit('log', { sessionId: data.sessionId, msg: `🧠 Personalised from ${total} contacts (${totalMsgs} messages).` });
+
+            // Report REAL totals from the DB — on-demand fetch results saved directly
+            // (bypassing the buffer counter), so count what actually landed for this node.
+            let realContacts = total, realMsgs = totalMsgs;
+            try {
+                const stat = await db.get(
+                    `SELECT COUNT(DISTINCT contact_id) c, COUNT(*) m FROM messages WHERE user_id = ? AND session_id = ?`,
+                    [userId, data.sessionId]);
+                if (stat) { realContacts = stat.c || total; realMsgs = stat.m || totalMsgs; }
+            } catch (e) { /* fall back to buffer counts */ }
+
+            io.to(userId).emit('history_complete', { sessionId: data.sessionId, contacts: realContacts, messages: realMsgs });
+            io.to(userId).emit('log', { sessionId: data.sessionId, msg: `🧠 Personalised from ${realContacts} contacts (${realMsgs} messages).` });
         } catch (e) {
             console.error('history download failed:', e.message);
             io.to(userId).emit('history_complete', { sessionId: data.sessionId, contacts: 0, messages: 0, error: true });
