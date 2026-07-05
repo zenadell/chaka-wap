@@ -2548,15 +2548,15 @@ async function startSession(userId, sessionId) {
     const phonebook = {};
     const logger = require('pino')({ level: 'silent' });
 
-    // Unlinked nodes need a browser identity that satisfies BOTH:
-    //  1) Pairing code: companion_platform_id = getPlatformId(browser[1]) must be a web
-    //     browser — 'Chrome' → CHROME(1). ('Desktop' → DESKTOP(7) makes WhatsApp reject the
-    //     link with "Couldn't link device".)
-    //  2) Full history sync: only requested when browser[0] ∈ Baileys' PLATFORM_MAP, which
-    //     is ONLY {'Mac OS','Windows'}. 'Ubuntu' is NOT in it — an Ubuntu identity silently
-    //     disables history sync, which is why freshly linked nodes got zero past chats.
-    // Browsers.macOS('Chrome') satisfies both (browser[0]='Mac OS' + browser[1]='Chrome').
-    const browserId = state.creds.registered ? Browsers.macOS('Desktop') : Browsers.macOS('Chrome');
+    // Unlinked nodes use a WEB browser identity ('Chrome') so:
+    //  - Pairing code works: companion_platform_id = getPlatformId(browser[1]) = CHROME(1).
+    //    ('Desktop' → DESKTOP(7) makes WhatsApp reject the link with "Couldn't link device".)
+    //  - The connection is accepted. IMPORTANT: a 'Mac OS'/'Windows' browser[0] COMBINED with
+    //    syncFullHistory:true makes Baileys claim a DARWIN/WIN32 desktop client requiring full
+    //    sync, which WhatsApp REJECTS at handshake with status 428 (no QR ever appears).
+    //    'Ubuntu' → WEB_BROWSER, which links reliably. History is fetched separately, on
+    //    demand (fetchMessageHistory), so we don't need the fragile desktop-platform trick.
+    const browserId = state.creds.registered ? Browsers.macOS('Desktop') : Browsers.ubuntu('Chrome');
 
     const sock = makeWASocket({
         version,
@@ -2566,11 +2566,11 @@ async function startSession(userId, sessionId) {
         },
         logger,
         printQRInTerminal: false,
-        // Pull past chats on link so per-contact personalisation has data to learn from.
-        // WhatsApp only pushes history on the INITIAL link, so this must be on beforehand.
-        // Requires browser[0] ∈ {'Mac OS','Windows'} (see browserId above). RAM is bounded by
-        // the pendingHistory cap (4000) and we only persist the top 20 contacts × 25 msgs.
-        syncFullHistory: true,
+        // syncFullHistory MUST stay false with a web ('Ubuntu') browser: turning it on only
+        // does anything with a desktop browser[0], and that combo triggers the 428 handshake
+        // rejection that blocked linking. Past chats are pulled on demand via
+        // fetchMessageHistory after the socket is connected (see personalisation flow).
+        syncFullHistory: false,
         browser: browserId,
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: false,
