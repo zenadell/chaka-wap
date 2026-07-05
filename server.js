@@ -2548,13 +2548,15 @@ async function startSession(userId, sessionId) {
     const phonebook = {};
     const logger = require('pino')({ level: 'silent' });
 
-    // Phone-number pairing sends companion_platform_id = getPlatformId(browser[1]).
-    // 'Desktop' → DESKTOP(7) is the NATIVE desktop-app platform and WhatsApp rejects it
-    // for web-style code pairing ("Couldn't link device"). 'Chrome' → CHROME(1) is the web
-    // companion WhatsApp expects. QR pairing works with either, so we give every UNLINKED
-    // node a Chrome identity — that lets us issue a pairing code on the LIVE socket (no
-    // disruptive teardown). Already-registered nodes don't re-register, so it's moot for them.
-    const browserId = state.creds.registered ? Browsers.macOS('Desktop') : Browsers.ubuntu('Chrome');
+    // Unlinked nodes need a browser identity that satisfies BOTH:
+    //  1) Pairing code: companion_platform_id = getPlatformId(browser[1]) must be a web
+    //     browser — 'Chrome' → CHROME(1). ('Desktop' → DESKTOP(7) makes WhatsApp reject the
+    //     link with "Couldn't link device".)
+    //  2) Full history sync: only requested when browser[0] ∈ Baileys' PLATFORM_MAP, which
+    //     is ONLY {'Mac OS','Windows'}. 'Ubuntu' is NOT in it — an Ubuntu identity silently
+    //     disables history sync, which is why freshly linked nodes got zero past chats.
+    // Browsers.macOS('Chrome') satisfies both (browser[0]='Mac OS' + browser[1]='Chrome').
+    const browserId = state.creds.registered ? Browsers.macOS('Desktop') : Browsers.macOS('Chrome');
 
     const sock = makeWASocket({
         version,
@@ -2564,12 +2566,16 @@ async function startSession(userId, sessionId) {
         },
         logger,
         printQRInTerminal: false,
-        syncFullHistory: false,
+        // Pull past chats on link so per-contact personalisation has data to learn from.
+        // WhatsApp only pushes history on the INITIAL link, so this must be on beforehand.
+        // Requires browser[0] ∈ {'Mac OS','Windows'} (see browserId above). RAM is bounded by
+        // the pendingHistory cap (4000) and we only persist the top 20 contacts × 25 msgs.
+        syncFullHistory: true,
         browser: browserId,
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: false,
         connectTimeoutMs: 180000,
-        keepAliveIntervalMs: 20000, 
+        keepAliveIntervalMs: 20000,
         getMessage: async (key) => (await store.loadMessage(key.remoteJid, key.id))?.message || undefined
     });
 
@@ -2714,11 +2720,13 @@ async function startSession(userId, sessionId) {
                         // Give the history sync a few seconds to arrive, then ask — once per
                         // session lifetime so reconnect blips don't re-spam the prompt.
                         session.historyAsked = true;
+                        // History streams in over ~10-30s after link; wait a bit so there's
+                        // real data buffered before we offer to personalise.
                         setTimeout(() => {
                             const s = sessions.get(globalId);
                             const buffered = s?.pendingHistory?.length || 0;
                             io.to(userId).emit('ask_history_consent', { sessionId, buffered });
-                        }, 6000);
+                        }, 15000);
                     }
                 } catch (e) { console.error('consent load failed:', e.message); }
             })();
@@ -3174,6 +3182,13 @@ io.on('connection', (socket) => {
         try {
             await db.run(`UPDATE users SET history_consent = 1 WHERE id = ?`, [userId]);
             if (session) session.historyConsent = 1;
+
+            // If history is still trickling in, give it a couple of seconds to settle so
+            // the download isn't empty. (Late arrivals also save directly now consent=1.)
+            if (session && (session.pendingHistory?.length || 0) < 40) {
+                io.to(userId).emit('history_progress', { sessionId: data.sessionId, done: 0, total: 0, contactName: 'Fetching your chats…' });
+                await delay(5000);
+            }
 
             const buffered = (session && session.pendingHistory) ? session.pendingHistory : [];
             // Group buffered messages by contact jid, tracking the most recent timestamp.
