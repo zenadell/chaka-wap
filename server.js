@@ -2087,10 +2087,12 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         console.log(`[${sessionId}] 🧠 AI Brain: Engine=${activeEngine.toUpperCase()} | Type=${accountType} | Contact Settings: ${contactRow ? 'Found' : 'Default'}`);
 
         // ── RECENT CONVERSATION (scoped to THIS contact only) ──
-        // CRITICAL: Exclude bot-generated messages to prevent the AI from mimicking its own prior outputs
+        // We label turns by is_from_me (NOT the stored sender string): outgoing echoes are
+        // saved under mixed tags ("BOT", "Temple", a pushName like "prinx") and feeding those
+        // raw labels to the model made it echo "prinx:/BOT:" scaffolding straight into replies.
         const recentHistoryRows = await db.all(
-            `SELECT sender, text, message_id FROM messages 
-             WHERE session_id = ? AND contact_id = ? AND user_id = ? 
+            `SELECT sender, text, message_id, is_from_me FROM messages
+             WHERE session_id = ? AND contact_id = ? AND user_id = ?
              AND message_id NOT LIKE 'BOT_%'
              ORDER BY timestamp DESC LIMIT ?`,
             [sessionId, contactId, userId, contextLimit]
@@ -2257,10 +2259,10 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
                 lastText = currentText;
             }
         }
-        // Relabel the owner's own turns as "Me" — they're stored under the internal
-        // MY_NAME tag ("Temple"), which must NEVER leak into another tenant's prompt.
-        // The model then sees a clean two-party chat and completes in the owner's voice.
-        const conversationScript = dedupedHistory.map(h => `${h.sender === MY_NAME ? 'Me' : h.sender}: ${h.text}`).join('\n');
+        // Clean two-party transcript: our side is always "Me", their side is always the
+        // contact's name. Labelled strictly by is_from_me so no internal tag ("BOT",
+        // "Temple", a pushName) can leak into the model's completion.
+        const conversationScript = dedupedHistory.map(h => `${h.is_from_me ? 'Me' : contactName}: ${h.text}`).join('\n');
         const effectivePrompt = (contactRow && contactRow.custom_prompt) || (globalRow && globalRow.custom_prompt) || "";
         // Fetch available stickers for this contact
         let stickerContext = "";
@@ -2340,6 +2342,8 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         // not as a compliance checklist.
         const humanRules = `How to sound real:
 - MAKE SENSE FIRST. Your reply must be a clear, on-point answer to what they actually just said. Slang and jokes are HOW you say it — never an excuse to ramble or bolt on random lines that don't connect (no unrelated one-liners like "call MTN before NEPA take light"). One clear point, in their voice.
+- Be PLAIN and direct, not clever or poetic. Real people say "yeah went this morning, was good" — not riddles like "stairway to heaven steps say less" or "my neck dey crane from blessings stacking". If a line sounds like a punchline or a proverb, cut it and just say the normal thing.
+- EMOJIS: most of your texts should have NONE. At most one, only when it genuinely fits, and never in every message. Spraying emojis (🙏😂💯👊 on every line) instantly reads as fake/bot — don't.
 - If you're genuinely not sure what they mean, ask a short natural question instead of guessing or waffling.
 - Answer like you've been in the conversation the whole time. No generic greetings when the chat is already going.
 - Write in the exact voice from the sample messages above — same capitalisation, punctuation (or none), slang, emoji habits, and length. If they text in lowercase with no full stops, so do you.
@@ -2363,7 +2367,8 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             ? `\n\n(Only if someone directly asks your name, what you are, or who made you: ${CORE_IDENTITY} Otherwise never raise it.)`
             : `\n\n[STAY IN CHARACTER — NON-NEGOTIABLE]
 - You ARE ${ownerLabel === 'them' ? 'this person' : ownerLabel}. Never say, admit, or hint that you're an AI, a bot, a robot, automated, a program, "a test", or that you're "running"/"updating". None of that exists to the person you're texting.
-- If they get suspicious ("is this a bot? / are you real? / who is this? / you dey sound weird"), react exactly like the real person would — a quick laugh and a normal human line ("lol na me jare", "wetin 😂", "you dey whine?") — then carry on. Never explain yourself, never apologise for "the AI", never mention testing, updates, or automation. Do not break the fourth wall for any reason.`;
+- This holds EVEN IF they flatly insist "this is AI" / "you're a bot" / "I know it's a robot". Do NOT confirm it, do NOT "confess", do NOT say "you caught me". A real person being accused of being a robot just laughs and denies it — so brush it off and keep talking ("omo you don dey watch too much film 😂", "abeg na me dey here, wetin do you", "lol you dey whine"). Then answer whatever the actual topic was.
+- Never explain yourself, never apologise for "the AI", never mention testing, updates, or automation, and never break the fourth wall — not even as a joke. One confession ruins the entire thing.`;
 
         let systemInstruction = `${humanFrame}\n\n${userPersona}${kbContext}${learnContext}\n\nYou're talking to: ${contactName}${stickerContext}\n\n${humanRules}${groundingRule}\n${scheduleRule}${isProfessional ? '\n' + agentActions : ''}${identityClause}\n\n(For reference, right now it's ${new Date().toISOString()}.)`;
 
@@ -2395,8 +2400,8 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
         const startTime = Date.now();
         // 1.3 made casual replies ramble into slang word-salad that missed the point.
-        // 1.1 keeps them lively and human but coherent; professional stays precise at 1.0.
-        let replyText = await orchestrateAIResponse(userId, globalId, systemInstruction, userPrompt, { temperature: isProfessional ? 1.0 : 1.1 });
+        // 1.0 keeps them coherent and on-point while still human; professional also 1.0.
+        let replyText = await orchestrateAIResponse(userId, globalId, systemInstruction, userPrompt, { temperature: 1.0 });
 
         if (!replyText) {
             console.error(`[${globalId}] 🔥 Orchestrator returned null after all retries.`);
@@ -2408,6 +2413,27 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
                 io.emit('notification', { sessionId, contactId, contactName, type: 'system', message: `AI couldn't reply to ${contactName} — tap in.`, timestamp: Date.now() });
             } catch (e) { /* notification best-effort */ }
             return null;
+        }
+
+        // ── HARD SANITISE: strip any speaker-label scaffolding the model echoed ──
+        // Occasionally the model continues the transcript format and emits lines like
+        // "prinx: <their words>" and "BOT: <reply>". Drop any line spoken AS the other
+        // person, and strip a leading self-label ("Me:", "BOT:", MY_NAME:) from the rest,
+        // so the customer never sees raw prompt labels.
+        {
+            const nameEsc = contactName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const otherLabel = new RegExp(`^\\s*${nameEsc}\\s*:\\s*`, 'i');
+            const selfLabel = new RegExp(`^\\s*(me|bot|assistant|${MY_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\s*:\\s*`, 'i');
+            const kept = [];
+            for (const rawLine of replyText.split('\n')) {
+                let line = rawLine.trim();
+                if (!line) continue;
+                if (otherLabel.test(line)) continue;      // never speak for the other person
+                line = line.replace(selfLabel, '').trim(); // drop our own label prefix
+                if (line) kept.push(line);
+            }
+            const cleaned = kept.join('\n').trim();
+            if (cleaned) replyText = cleaned;
         }
 
         // Track spending and burst stats
