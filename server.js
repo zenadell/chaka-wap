@@ -2275,7 +2275,10 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
                  ORDER BY s.usage_count DESC LIMIT 10`, [sessionId, contactId, userId]);
             if (availableStickers.length > 0) {
                 const stickerList = availableStickers.map(s => s.file_sha256).join(', ');
-                stickerContext = `\n\nSTICKER CAPABILITY:\nYou have ${availableStickers.length} stickers from previous chats with ${contactName}. To reply with a sticker INSTEAD of text, output ONLY: [STICKER: <sha256>]\nAvailable: ${stickerList}\nUSE STICKERS NATURALLY: When ${contactName} sends something funny, expresses shock, or says something a sticker reaction suits better than words — send one. Don't overdo it (maybe 1 in every 5-8 messages). Never send a sticker AND text together.`;
+                // Stickers are scoped to THIS contact — these are ones you've actually used with
+                // them — so usage is already personalised. Guidance matches how you sticker this
+                // specific person, and stays conservative for professional/work contacts.
+                stickerContext = `\n\nSTICKER CAPABILITY:\nYou have ${availableStickers.length} sticker(s) you've actually used in THIS chat with ${contactName}. To reply with a sticker INSTEAD of text, output ONLY: [STICKER: <sha256>] (nothing else on that message).\nAvailable: ${stickerList}\nMatch how YOU use stickers with ${contactName} specifically. ${isProfessional ? 'This is a work/professional contact — stickers should be rare and only if clearly appropriate; when unsure, use words.' : 'Send one only when it genuinely fits the vibe you two have — a reaction to something funny or surprising.'} Don't force it (at most ~1 in every 6-8 messages), and never send a sticker together with text.`;
             }
         } catch(e) { /* sticker fetch failed, no biggie */ }
 
@@ -2354,6 +2357,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 - Never use assistant-speak: no "How can I help", "I'm here to assist", "Feel free to", "Great question", "Let me know if you need anything", "happy to help", "As an AI", or sign-offs. Real people don't talk like that.
 - Don't restate their question, don't over-explain, don't be relentlessly cheerful. A bit of dryness or brevity is human.
 - Never repeat a line you've already used in this chat — say it fresh or say something new.
+- VARY HOW YOU OPEN. Do not start message after message the same way — if your last few replies began with "ey" (or any same word), open differently this time. Real people mix it up: sometimes straight into the point, sometimes a reaction ("lmao", "wait", "fr?"), sometimes nothing at all, occasionally their name. Starting every message the same is the single biggest bot tell — avoid it.
 - Don't call them by name unless they've told you their name here.`;
 
         const groundingRule = isProfessional
