@@ -2766,7 +2766,16 @@ async function startSession(userId, sessionId) {
             // Already approved (e.g. re-link) → persist directly.
             let saved = 0;
             for (const msg of flat) { if (await saveMessageToDB(userId, sessionId, msg, true)) saved++; }
-            if (saved > 0) io.emit('log', { sessionId, msg: `✅ Synced ${saved} past messages.` });
+            if (saved > 0) {
+                io.emit('log', { sessionId, msg: `✅ Synced ${saved} past messages.` });
+                // Live-refresh the dashboard counters so the sync is visible without a reload.
+                try {
+                    const mc = await db.get(`SELECT COUNT(*) c FROM messages WHERE user_id=? AND session_id=?`, [userId, sessionId]);
+                    const sc = await db.get(`SELECT COUNT(*) c FROM stickers WHERE user_id=? AND session_id=?`, [userId, sessionId]);
+                    let sizeMb = 0; try { sizeMb = (fs.statSync('./data/chaka_data.db').size / (1024 * 1024)).toFixed(2); } catch (e) {}
+                    io.to(userId).emit('db_stats', { sessionId, messageCount: mc?.c || 0, stickerCount: sc?.c || 0, sizeMb });
+                } catch (e) { /* stats refresh best-effort */ }
+            }
             return;
         }
         if (consent === 0) return; // declined — never persist past history
