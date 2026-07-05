@@ -199,6 +199,65 @@ function recordMessage(userId, contactId, tokens) {
     BURST_TRACKER.set(key, window.slice(-10));
 }
 
+// ── DEFERRED REPLY (burst cool-down) ──
+// When a contact bursts messages, we don't answer every one — but we must NOT silently
+// drop the last one. We debounce: remember the newest message and, once they pause, reply
+// to it (instead of only reacting when a fresh message arrives). Additive & self-contained
+// so it can't affect the live-reply path.
+const DEFERRED_REPLIES = new Map(); // `${userId}_${sessionId}_${contactId}` -> { timer, ctx }
+function scheduleDeferredReply(ctx) {
+    const key = `${ctx.userId}_${ctx.sessionId}_${ctx.cleanId}`;
+    const existing = DEFERRED_REPLIES.get(key);
+    if (existing?.timer) clearTimeout(existing.timer);
+    // ~40s after the last burst message → they've paused → answer the latest one.
+    const timer = setTimeout(async () => {
+        DEFERRED_REPLIES.delete(key);
+        try { await deliverDeferredReply(ctx); } catch (e) { console.error('deferred reply failed:', e.message); }
+    }, 40000);
+    DEFERRED_REPLIES.set(key, { timer, ctx });
+}
+function cancelDeferredReply(userId, sessionId, cleanId) {
+    const key = `${userId}_${sessionId}_${cleanId}`;
+    const e = DEFERRED_REPLIES.get(key);
+    if (e?.timer) clearTimeout(e.timer);
+    DEFERRED_REPLIES.delete(key);
+}
+async function deliverDeferredReply(ctx) {
+    const { userId, sessionId, cleanId, contactName, jid, text, msgKey } = ctx;
+    const session = sessions.get(`${userId}_${sessionId}`);
+    if (!session || !session.sock || !session.isConnected) return;
+    const sock = session.sock;
+
+    // Respect the same gates as the live path.
+    const g = await db.get(`SELECT master_auto_reply FROM global_settings WHERE id='settings' AND user_id=?`, [userId]);
+    if (g && g.master_auto_reply === 0) return;
+    const cs = await db.get(`SELECT auto_reply FROM contacts WHERE session_id=? AND contact_id=? AND user_id=?`, [sessionId, cleanId, userId]);
+    if (cs && cs.auto_reply === 0) return;
+
+    let replyText = await generateSmartReply(userId, sessionId, contactName, cleanId, text);
+    if (!replyText) return;
+    // Deferred path sends plain text — strip any control/agent markers.
+    replyText = replyText.replace(/\[(SCHEDULE_MESSAGE|LEAD|HANDOFF|STICKER):[^\]]*\]/gi, '').trim();
+    if (!replyText) return;
+
+    try { await sock.readMessages([msgKey]); } catch (e) {}
+    const chunks = replyText.split(/\n\s*\n/).map(c => c.trim()).filter(Boolean).slice(0, 2);
+    const finalChunks = chunks.length ? chunks : [replyText];
+    for (let i = 0; i < finalChunks.length; i++) {
+        const part = finalChunks[i];
+        await sock.sendPresenceUpdate('composing', jid);
+        await delay(Math.min(700 + part.length * 45 + Math.random() * 800, 6000));
+        await sock.sendMessage(jid, { text: part });
+        noteBotSentText(sessionId, cleanId, part);
+        const botId = 'BOT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+        await db.run(`INSERT INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [botId, sessionId, cleanId, userId, part, MY_NAME, Math.floor(Date.now() / 1000), new Date().toISOString(), 1, null]);
+        if (i < finalChunks.length - 1) await delay(500 + Math.random() * 700);
+    }
+    extractKnowledgeTriples(userId, sessionId, cleanId).catch(() => {});
+    io.emit('log', { sessionId, msg: `🚀 Replied to ${contactName} (after their burst settled)` });
+}
+
 
 // --- DATABASE INITIALIZATION (SQLITE) ---
 async function initDB() {
@@ -2867,10 +2926,14 @@ async function startSession(userId, sessionId) {
             // 🚨 BURST PROTECTION CHECK
             const burstMode = await isBurstMode(userId, cleanId);
             if (burstMode) {
-                console.log(`[${sessionId}] ⏸️ BURST MODE DETECTED for ${contactName}: Skipping AI reply to save tokens.`);
-                io.emit('log', { sessionId, msg: `⏸️ Rapid messages from ${contactName} - Cooling down...` });
+                console.log(`[${sessionId}] ⏸️ BURST MODE DETECTED for ${contactName}: deferring reply until they pause.`);
+                io.emit('log', { sessionId, msg: `⏸️ ${contactName} is on a roll — will reply once they pause…` });
+                // Don't drop it: debounce and answer the LATEST message after they settle.
+                scheduleDeferredReply({ userId, sessionId, cleanId, contactName, jid, text: content.text, msgKey: msg.key });
                 continue;
             }
+            // A live reply supersedes any pending deferred one for this contact.
+            cancelDeferredReply(userId, sessionId, cleanId);
 
             // THIN HISTORY SCRAPE
             try {
