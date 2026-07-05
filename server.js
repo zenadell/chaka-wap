@@ -2328,10 +2328,14 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         // Fetch available stickers for this contact
         let stickerContext = "";
         try {
-            const availableStickers = await db.all(
-                `SELECT DISTINCT s.file_sha256 FROM stickers s 
-                 WHERE s.session_id = ? AND s.contact_id = ? AND s.user_id = ? 
-                 ORDER BY s.usage_count DESC LIMIT 10`, [sessionId, contactId, userId]);
+            const stickerRows = await db.all(
+                `SELECT DISTINCT s.file_sha256 FROM stickers s
+                 WHERE s.session_id = ? AND s.contact_id = ? AND s.user_id = ?
+                 ORDER BY s.usage_count DESC LIMIT 20`, [sessionId, contactId, userId]);
+            // Only offer stickers whose image file actually exists on disk — otherwise the
+            // model may pick one we can't send, and the marker leaks as "[STICKER: <code>]".
+            const availableStickers = stickerRows.filter(s =>
+                fs.existsSync(path.join(__dirname, 'public', 'stickers', `${s.file_sha256}.webp`))).slice(0, 10);
             if (availableStickers.length > 0) {
                 const stickerList = availableStickers.map(s => s.file_sha256).join(', ');
                 // Stickers are scoped to THIS contact — these are ones you've actually used with
@@ -3073,7 +3077,7 @@ async function startSession(userId, sessionId) {
                     }
 
                     // STICKER REDIRECT
-                    const stickerMatch = replyText.match(/\[STICKER: ([a-f0-9]+)\]/i);
+                    const stickerMatch = replyText.match(/\[STICKER:\s*([a-f0-9]+)\]/i);
                     if (stickerMatch) {
                         const sha256 = stickerMatch[1];
                         const stickerPath = path.join(__dirname, 'public', 'stickers', `${sha256}.webp`);
@@ -3089,8 +3093,17 @@ async function startSession(userId, sessionId) {
 
                             io.emit('log', { sessionId, msg: `🚀 Sent Sticker to ${contactName}` });
                             continue;
+                        } else {
+                            // The sticker's image file isn't on disk — NEVER send the raw marker
+                            // as text (that's the "[STICKER: <code>]" leak). Strip it and fall
+                            // through to whatever text remains.
+                            console.log(`[${sessionId}] ⚠️ Sticker ${sha256.substring(0, 8)} file missing — stripping marker.`);
+                            replyText = replyText.replace(/\[STICKER:\s*[a-f0-9]+\]/gi, '').trim();
                         }
                     }
+                    // Safety: strip any stray sticker marker and skip if nothing is left to send.
+                    replyText = replyText.replace(/\[STICKER:\s*[a-f0-9]+\]/gi, '').trim();
+                    if (!replyText) { console.log(`[${sessionId}] ⏭ Nothing left to send after sticker strip.`); continue; }
 
                     // NORMAL TEXT REPLY — sent the way a human actually texts.
                     // First mark their message read (a person reads before replying),
