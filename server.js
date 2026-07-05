@@ -2548,15 +2548,13 @@ async function startSession(userId, sessionId) {
     const phonebook = {};
     const logger = require('pino')({ level: 'silent' });
 
-    // One WEB-browser identity for every node (matches the proven-working v2 bot config
-    // `["Temple AI","Chrome","1.0.0"]`). Why this exact shape:
-    //  - browser[0]='Chaka' is NOT in Baileys' PLATFORM_MAP → webSubPlatform=WEB_BROWSER.
-    //    (A 'Mac OS'/'Windows' browser[0] + syncFullHistory:true claims a DARWIN/WIN32 desktop
-    //    client, which WhatsApp REJECTS at handshake with status 428 → no QR ever appears.)
-    //  - browser[1]='Chrome' → getPlatformId('Chrome')=CHROME(1), the web companion the
-    //    pairing-code flow needs ('Desktop' → DESKTOP(7) = "Couldn't link device").
-    // This identity links reliably AND (with syncFullHistory below) receives full history.
-    const browserId = ['Chaka', 'Chrome', '1.0.0'];
+    // KNOWN-GOOD LINKING CONFIG (proven: user linked + personalised successfully with this).
+    // Unlinked → Browsers.ubuntu('Chrome'): web browser (browser[0]='Ubuntu' not in
+    // PLATFORM_MAP → no 428) + browser[1]='Chrome' → CHROME(1) so the pairing code links.
+    // Registered reconnects keep macOS('Desktop'). Do NOT combine this with
+    // syncFullHistory:true — that destabilises the pairing companion handshake (408→401,
+    // "Couldn't link device"). Past-chat history is fetched on demand instead (safe path).
+    const browserId = state.creds.registered ? Browsers.macOS('Desktop') : Browsers.ubuntu('Chrome');
 
     const sock = makeWASocket({
         version,
@@ -2566,10 +2564,10 @@ async function startSession(userId, sessionId) {
         },
         logger,
         printQRInTerminal: false,
-        // Request full past-chat history on link. Safe here because browserId is a WEB
-        // identity (not a desktop platform), so this sets requireFullSync WITHOUT the 428
-        // that a desktop-platform claim triggers. This is what feeds per-contact learning.
-        syncFullHistory: true,
+        // MUST stay false: syncFullHistory:true adds requireFullSync to the registration,
+        // which breaks the pairing-code companion handshake ("Couldn't link device", 408→401).
+        // History is pulled on demand via fetchMessageHistory after the socket is connected.
+        syncFullHistory: false,
         browser: browserId,
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: false,
