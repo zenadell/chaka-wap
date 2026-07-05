@@ -2043,14 +2043,16 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
     const availableTokens = MAX_TPM - currentSpend;
 
-    // Dynamic scaling: the more budget left, the richer the context
+    // Dynamic scaling: the more budget left, the richer the context.
+    // Voice samples are only ~5 short lines but they're THE signal for sounding human,
+    // so we keep them on in every tier except an extreme-pressure fallback.
     let contextLimit, memoryLimit, includeStyle;
     if (availableTokens > MAX_TPM * 0.7) {
         contextLimit = 12; memoryLimit = 3; includeStyle = true;
     } else if (availableTokens > MAX_TPM * 0.4) {
         contextLimit = 7;  memoryLimit = 2; includeStyle = true;
     } else if (availableTokens > MAX_TPM * 0.2) {
-        contextLimit = 4;  memoryLimit = 1; includeStyle = false;
+        contextLimit = 4;  memoryLimit = 1; includeStyle = true;
     } else {
         contextLimit = 3;  memoryLimit = 0; includeStyle = false;
     }
@@ -2340,6 +2342,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 - Answer what they ACTUALLY just said, like you've been in the conversation the whole time. No generic greetings when the chat is already going.
 - Write in the exact voice from the sample messages above — same capitalisation, punctuation (or none), slang, emoji habits, and length. If they text in lowercase with no full stops, so do you.
 - Keep it to one message, usually a line or two. Match their length and energy. A short real reply beats a padded one.
+- Most replies are a single text. But if it's genuinely how ${ownerLabel === 'them' ? 'they' : ownerLabel} would type it, you can fire off TWO quick texts instead of one — put a blank line between them (e.g. "omgg" then "when did that happen"). Never more than two. Don't force it.
 - Never use assistant-speak: no "How can I help", "I'm here to assist", "Feel free to", "Great question", "Let me know if you need anything", "happy to help", "As an AI", or sign-offs. Real people don't talk like that.
 - Don't restate their question, don't over-explain, don't be relentlessly cheerful. A bit of dryness or brevity is human.
 - Never repeat a line you've already used in this chat — say it fresh or say something new.
@@ -2913,25 +2916,40 @@ async function startSession(userId, sessionId) {
                         }
                     }
 
-                    // NORMAL TEXT REPLY — with human typing rhythm.
-                    // A real person doesn't type a 3-line answer in 1.5s: scale the
-                    // "typing…" window with reply length (~45ms/char) plus jitter,
-                    // clamped so short replies feel snappy and long ones never stall.
-                    await sock.sendPresenceUpdate('composing', jid);
-                    const typingMs = Math.min(1200 + replyText.length * 45 + Math.random() * 900, 7000);
-                    await delay(typingMs);
-                    await sock.sendMessage(jid, { text: replyText });
-                    noteBotSentText(sessionId, cleanId, replyText); // keep this out of style samples
+                    // NORMAL TEXT REPLY — sent the way a human actually texts.
+                    // First mark their message read (a person reads before replying),
+                    // then send the reply as one or (if the model split it with a blank
+                    // line) a short burst of quick texts, each with its own read→type→send
+                    // rhythm scaled to length. A real person doesn't type 3 lines in 1.5s.
+                    try { await sock.readMessages([msg.key]); } catch (e) { /* read receipt best-effort */ }
 
-                    // SAVE BOT REPLY
-                    const botId = 'BOT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-                    await db.run(`INSERT INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [botId, sessionId, cleanId, userId, replyText, MY_NAME, Math.floor(Date.now() / 1000), new Date().toISOString(), 1, null]);
+                    const replyChunks = replyText
+                        .split(/\n\s*\n/)            // a blank line = "send as a separate text"
+                        .map(c => c.trim())
+                        .filter(Boolean)
+                        .slice(0, 2);               // never spam — at most two texts in a burst
+                    const finalChunks = replyChunks.length ? replyChunks : [replyText];
+
+                    for (let ci = 0; ci < finalChunks.length; ci++) {
+                        const part = finalChunks[ci];
+                        await sock.sendPresenceUpdate('composing', jid);
+                        const typingMs = Math.min(700 + part.length * 45 + Math.random() * 800, 6000);
+                        await delay(typingMs);
+                        await sock.sendMessage(jid, { text: part });
+                        noteBotSentText(sessionId, cleanId, part); // keep out of style samples
+
+                        const botId = 'BOT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+                        await db.run(`INSERT INTO messages (message_id, session_id, contact_id, user_id, text, sender, timestamp, date, is_from_me, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            [botId, sessionId, cleanId, userId, part, MY_NAME, Math.floor(Date.now() / 1000), new Date().toISOString(), 1, null]);
+
+                        // brief gap before the next text, like hitting send then typing again
+                        if (ci < finalChunks.length - 1) await delay(500 + Math.random() * 700);
+                    }
 
                     // Trigger Graph Extraction asynchronously
                     extractKnowledgeTriples(userId, sessionId, cleanId).catch(err => console.error("Graph extraction failed:", err));
 
-                    io.emit('log', { sessionId, msg: `🚀 Replied to ${contactName}` });
+                    io.emit('log', { sessionId, msg: `🚀 Replied to ${contactName}${finalChunks.length > 1 ? ` (${finalChunks.length} texts)` : ''}` });
                 } else {
                     console.log(`[${sessionId}] ⏭ Skipping: AI returned empty (budget or burst).`);
                 }
