@@ -2723,13 +2723,13 @@ async function startSession(userId, sessionId) {
                         // Give the history sync a few seconds to arrive, then ask — once per
                         // session lifetime so reconnect blips don't re-spam the prompt.
                         session.historyAsked = true;
-                        // History streams in over ~10-30s after link; wait a bit so there's
-                        // real data buffered before we offer to personalise.
+                        // Ask soon after connect; the download itself now streams live and
+                        // keeps counting as more history arrives, so we don't need to pre-buffer.
                         setTimeout(() => {
                             const s = sessions.get(globalId);
                             const buffered = s?.pendingHistory?.length || 0;
                             io.to(userId).emit('ask_history_consent', { sessionId, buffered });
-                        }, 15000);
+                        }, 6000);
                     }
                 } catch (e) { console.error('consent load failed:', e.message); }
             })();
@@ -3202,85 +3202,63 @@ io.on('connection', (socket) => {
             await db.run(`UPDATE users SET history_consent = 1 WHERE id = ?`, [userId]);
             if (session) session.historyConsent = 1;
 
-            // ── ON-DEMAND FETCH (pairing-safe deep history) ──
-            // Actively request past messages for the chats we know about. Unlike the on-link
-            // RECENT sync, fetchMessageHistory works on ANY connected session (so the current
-            // node benefits without re-linking) and never touches the registration handshake.
-            // Results stream back via messaging-history.set and save directly (consent=1).
-            try {
-                const sock = session?.sock;
-                const store = session?.store;
-                const tsNum = (m) => { const t = m?.messageTimestamp; return typeof t === 'number' ? t : (t?.toNumber ? t.toNumber() : Number(t) || 0); };
-                if (sock && typeof sock.fetchMessageHistory === 'function' && store?.data?.messages) {
-                    const chats = Object.entries(store.data.messages)
-                        .filter(([jid]) => jid.endsWith('@s.whatsapp.net'))
-                        .map(([jid, msgs]) => {
-                            const valid = (msgs || []).filter(m => m?.key?.id && tsNum(m));
-                            if (!valid.length) return null;
-                            const oldest = valid.reduce((a, b) => tsNum(a) <= tsNum(b) ? a : b);
-                            return { jid, oldestKey: oldest.key, oldestTs: tsNum(oldest), latestTs: Math.max(...valid.map(tsNum)) };
-                        })
-                        .filter(Boolean)
-                        .sort((a, b) => b.latestTs - a.latestTs)
-                        .slice(0, 20);
-                    for (let i = 0; i < chats.length; i++) {
-                        const c = chats[i];
-                        try { await sock.fetchMessageHistory(30, c.oldestKey, c.oldestTs * 1000); } catch (e) { /* per-chat best effort */ }
-                        io.to(userId).emit('history_progress', { sessionId: data.sessionId, done: i + 1, total: chats.length, contactName: session.phonebook?.[c.jid] || c.jid.split('@')[0] });
-                        await delay(500);
-                    }
-                    if (chats.length) await delay(8000); // let the requested history stream in and save
-                }
-            } catch (e) { console.error('on-demand history fetch failed:', e.message); }
+            const sid = data.sessionId;
+            const countMsgs = async () => (await db.get(`SELECT COUNT(*) c FROM messages WHERE user_id=? AND session_id=?`, [userId, sid]))?.c || 0;
+            const countContacts = async () => (await db.get(`SELECT COUNT(DISTINCT contact_id) c FROM messages WHERE user_id=? AND session_id=?`, [userId, sid]))?.c || 0;
 
-            // If the on-link RECENT sync is still trickling in, give it a moment to settle.
-            if (session && (session.pendingHistory?.length || 0) < 40) {
-                io.to(userId).emit('history_progress', { sessionId: data.sessionId, done: 0, total: 0, contactName: 'Fetching your chats…' });
-                await delay(5000);
-            }
-
+            // 1) Flush any history buffered before consent (in the BACKGROUND) so the live
+            //    count starts climbing right away and the poller can watch it.
             const buffered = (session && session.pendingHistory) ? session.pendingHistory : [];
-            // Group buffered messages by contact jid, tracking the most recent timestamp.
-            const byJid = new Map();
-            for (const msg of buffered) {
-                const jid = msg?.key?.remoteJid;
-                if (!jid || jid === 'status@broadcast' || jid.includes('@g.us') || jid.includes('@broadcast') || jid.includes('@newsletter')) continue;
-                if (!byJid.has(jid)) byJid.set(jid, []);
-                byJid.get(jid).push(msg);
-            }
-            const MAX_CONTACTS = 20, MAX_PER_CONTACT = 25;
-            // Rank contacts by their most recent message, take the top N.
-            const ranked = [...byJid.entries()]
-                .map(([jid, msgs]) => ({ jid, msgs, latest: Math.max(...msgs.map(m => Number(m.messageTimestamp) || 0)) }))
-                .sort((a, b) => b.latest - a.latest)
-                .slice(0, MAX_CONTACTS);
+            if (session) session.pendingHistory = [];
+            (async () => { for (const msg of buffered) { try { await saveMessageToDB(userId, sid, msg, true); } catch (e) {} } })();
 
-            const total = ranked.length;
-            io.to(userId).emit('history_progress', { sessionId: data.sessionId, done: 0, total, contactName: '' });
-            let done = 0, totalMsgs = 0;
-            for (const { jid, msgs } of ranked) {
-                // newest messages first, keep the most recent per contact
-                const recent = msgs.sort((a, b) => (Number(b.messageTimestamp) || 0) - (Number(a.messageTimestamp) || 0)).slice(0, MAX_PER_CONTACT);
-                for (const msg of recent) { if (await saveMessageToDB(userId, data.sessionId, msg, true)) totalMsgs++; }
-                done++;
-                const name = session?.phonebook?.[jid] || jid.split('@')[0];
-                io.to(userId).emit('history_progress', { sessionId: data.sessionId, done, total, contactName: name });
-                await delay(120); // let the animation breathe
-            }
-            if (session) session.pendingHistory = []; // free the RAM buffer
+            // 2) Kick off on-demand deep-history fetches in the BACKGROUND. Results stream back
+            //    via messaging-history.set and save directly (consent=1); the poller tracks them.
+            (async () => {
+                try {
+                    const sock = session?.sock, store = session?.store;
+                    const tsNum = (m) => { const t = m?.messageTimestamp; return typeof t === 'number' ? t : (t?.toNumber ? t.toNumber() : Number(t) || 0); };
+                    if (sock && typeof sock.fetchMessageHistory === 'function' && store?.data?.messages) {
+                        const chats = Object.entries(store.data.messages)
+                            .filter(([jid]) => jid.endsWith('@s.whatsapp.net'))
+                            .map(([jid, msgs]) => {
+                                const valid = (msgs || []).filter(m => m?.key?.id && tsNum(m));
+                                if (!valid.length) return null;
+                                const oldest = valid.reduce((a, b) => tsNum(a) <= tsNum(b) ? a : b);
+                                return { jid, oldestKey: oldest.key, oldestTs: tsNum(oldest), latestTs: Math.max(...valid.map(tsNum)) };
+                            })
+                            .filter(Boolean).sort((a, b) => b.latestTs - a.latestTs).slice(0, 20);
+                        for (const c of chats) {
+                            try { await sock.fetchMessageHistory(30, c.oldestKey, c.oldestTs * 1000); } catch (e) {}
+                            await delay(400);
+                        }
+                    }
+                } catch (e) { console.error('on-demand fetch failed:', e.message); }
+            })();
 
-            // Report REAL totals from the DB — on-demand fetch results saved directly
-            // (bypassing the buffer counter), so count what actually landed for this node.
-            let realContacts = total, realMsgs = totalMsgs;
-            try {
-                const stat = await db.get(
-                    `SELECT COUNT(DISTINCT contact_id) c, COUNT(*) m FROM messages WHERE user_id = ? AND session_id = ?`,
-                    [userId, data.sessionId]);
-                if (stat) { realContacts = stat.c || total; realMsgs = stat.m || totalMsgs; }
-            } catch (e) { /* fall back to buffer counts */ }
-
-            io.to(userId).emit('history_complete', { sessionId: data.sessionId, contacts: realContacts, messages: realMsgs });
-            io.to(userId).emit('log', { sessionId: data.sessionId, msg: `🧠 Personalised from ${realContacts} contacts (${realMsgs} messages).` });
+            // 3) REAL progress — poll the ACTUAL stored count. The bar only reaches 100%
+            //    (history_complete) once the count STOPS growing, i.e. everything is truly
+            //    downloaded and saved. Finishes after ~7.5s of no new messages (min 6s), or a
+            //    120s safety cap.
+            let poll;
+            const started = Date.now();
+            let lastCount = -1, stableTicks = 0;
+            const finish = async () => {
+                clearInterval(poll);
+                if (session) session.pendingHistory = [];
+                const messages = await countMsgs(), contacts = await countContacts();
+                io.to(userId).emit('history_complete', { sessionId: sid, messages, contacts });
+                io.to(userId).emit('log', { sessionId: sid, msg: `🧠 Personalised from ${contacts} contacts (${messages} messages).` });
+            };
+            io.to(userId).emit('history_progress', { sessionId: sid, streaming: true, synced: await countMsgs(), contacts: await countContacts() });
+            poll = setInterval(async () => {
+                try {
+                    const c = await countMsgs();
+                    io.to(userId).emit('history_progress', { sessionId: sid, streaming: true, synced: c, contacts: await countContacts() });
+                    if (c === lastCount) stableTicks++; else { stableTicks = 0; lastCount = c; }
+                    if ((stableTicks >= 5 && Date.now() - started > 6000) || Date.now() - started > 120000) await finish();
+                } catch (e) { /* keep polling */ }
+            }, 1500);
         } catch (e) {
             console.error('history download failed:', e.message);
             io.to(userId).emit('history_complete', { sessionId: data.sessionId, contacts: 0, messages: 0, error: true });

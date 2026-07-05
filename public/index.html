@@ -1293,18 +1293,33 @@
             closePerso();
             showToast('No problem — Chaka still works, just less tailored');
         }
-        socket.on('history_progress', (d) => {
-            const pct = d.total ? Math.round((d.done / d.total) * 100) : 0;
+        function setPersoBar(pct) {
             persoEl('perso-pct').textContent = pct + '%';
             persoEl('perso-bar').style.width = pct + '%';
             persoEl('perso-ring').style.strokeDashoffset = (276.5 * (1 - pct / 100)).toFixed(1);
-            persoEl('perso-sub').textContent = `${d.done} of ${d.total} contacts`;
-            if (d.contactName) persoEl('perso-status').textContent = `Learning how you talk to ${d.contactName}`;
+        }
+        socket.on('history_progress', (d) => {
+            if (d.streaming) {
+                // REAL progress: bar climbs with the actual stored message count and only
+                // approaches (never hits) 100% until history_complete fires.
+                const synced = d.synced || 0;
+                const pct = Math.min(96, Math.round((1 - 1 / (1 + synced / 400)) * 100));
+                setPersoBar(pct);
+                persoEl('perso-status').textContent = 'Downloading your chats…';
+                persoEl('perso-sub').textContent = `${synced.toLocaleString()} messages · ${(d.contacts || 0).toLocaleString()} contacts`;
+            } else {
+                const pct = d.total ? Math.round((d.done / d.total) * 100) : 0;
+                setPersoBar(pct);
+                persoEl('perso-sub').textContent = `${d.done} of ${d.total} contacts`;
+                if (d.contactName) persoEl('perso-status').textContent = `Learning how you talk to ${d.contactName}`;
+            }
         });
         socket.on('history_complete', (d) => {
             if (d.error) { persoEl('perso-status').textContent = 'Something went wrong — try again later'; setTimeout(closePerso, 2500); return; }
-            persoEl('perso-done-msg').textContent = d.contacts
-                ? `Learned from ${d.contacts} contact${d.contacts > 1 ? 's' : ''} (${d.messages} messages). Replies are now tailored to each person.`
+            setPersoBar(100); // only now — everything is truly downloaded and stored
+            persoEl('perso-status').textContent = 'Done';
+            persoEl('perso-done-msg').textContent = d.messages
+                ? `Downloaded ${(d.messages).toLocaleString()} messages across ${d.contacts} contact${d.contacts > 1 ? 's' : ''}. Replies are now tailored to each person.`
                 : `All set. Chaka will keep learning as you chat.`;
             showPersoState('perso-done');
         });
