@@ -2074,9 +2074,13 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
         // Account type drives tone: business/freelancer stay professional and on-persona;
         // personal/creator mirror the owner's casual texting style.
-        const userRow = await db.get(`SELECT account_type FROM users WHERE id = ?`, [userId]);
+        const userRow = await db.get(`SELECT account_type, display_name, business_name FROM users WHERE id = ?`, [userId]);
         const accountType = userRow?.account_type || 'personal';
         const isProfessional = accountType === 'business' || accountType === 'freelancer';
+        // The name we're texting AS — drives the "you are this real person" framing.
+        const ownerLabel = isProfessional
+            ? (userRow?.business_name || userRow?.display_name || 'this business')
+            : (userRow?.display_name || 'them');
 
         console.log(`[${sessionId}] 🧠 AI Brain: Engine=${activeEngine.toUpperCase()} | Type=${accountType} | Contact Settings: ${contactRow ? 'Found' : 'Default'}`);
 
@@ -2227,15 +2231,17 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
                 pinnedFacts.map(f => `• ${f.text}`).join('\n') + '\n\n';
         }
 
-        // ── STYLE LEARNING (only when budget allows) ──
-        // NOTE: Style context is kept minimal to prevent feedback loops
-        // Professional accounts follow the persona's tone, NOT the owner's casual style,
-        // so we don't feed casual style samples that would pull replies off-brand.
+        // ── VOICE LEARNING — the single most important signal for sounding human ──
+        // The owner's own real messages ARE the voice. We feed them for every account
+        // type (even a business owner has a recognisable way of writing) so replies read
+        // like the actual person typed them, not a template. The samples pull tone; the
+        // rules below keep business replies grounded. Bot echoes are already excluded
+        // upstream, so there's no feedback loop.
         let styleContext = "";
-        if (includeStyle && !isProfessional) {
+        if (includeStyle) {
             const styleSamples = await fetchUserStyleSamples(userId, sessionId, contactId);
             if (styleSamples) {
-                styleContext = `[STYLE REFERENCE — imitate the VIBE only: how you capitalise, slang, emoji habits, message length. These are NOT scripts. Do NOT reuse their words or send any of these lines back. Write a fresh reply.]\n${styleSamples}\n\n`;
+                styleContext = `[HOW ${ownerLabel} REALLY TEXTS — these are actual messages ${ownerLabel} has sent. This is your voice. Mirror it precisely: the capitalisation (or all-lowercase), the punctuation they skip, their slang, their emoji habits, how short their messages are, their rhythm. Someone reading your reply should assume ${ownerLabel} typed it themselves. Never quote these lines back — just write in this exact voice.]\n${styleSamples}\n\n`;
             }
         }
 
@@ -2249,7 +2255,10 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
                 lastText = currentText;
             }
         }
-        const conversationScript = dedupedHistory.map(h => `${h.sender}: ${h.text}`).join('\n');
+        // Relabel the owner's own turns as "Me" — they're stored under the internal
+        // MY_NAME tag ("Temple"), which must NEVER leak into another tenant's prompt.
+        // The model then sees a clean two-party chat and completes in the owner's voice.
+        const conversationScript = dedupedHistory.map(h => `${h.sender === MY_NAME ? 'Me' : h.sender}: ${h.text}`).join('\n');
         const effectivePrompt = (contactRow && contactRow.custom_prompt) || (globalRow && globalRow.custom_prompt) || "";
         // Fetch available stickers for this contact
         let stickerContext = "";
@@ -2316,25 +2325,41 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
   • If the chat needs the human owner — an upset/angry customer, a complaint or refund, a complex or high-value request, or they explicitly ask for a human — append: [HANDOFF: <short reason>]
   Only use a tag when it genuinely applies. Never mention these tags in your words.`;
 
-        // Persona is the source of truth. For professional accounts we explicitly forbid
-        // the model from copying the other person's casual tone (the cause of off-brand
-        // replies like "yo what's good" from a business assistant).
-        const personaHeader = isProfessional
-            ? `You MUST stay fully in character as defined below at ALL times. This role and its tone are authoritative and override the casual style of anyone you're talking to.\n\n${userPersona}`
-            : userPersona;
+        // ── HUMAN-FIRST PROMPT ──
+        // We deliberately do NOT open with "you are an AI assistant" — that single phrase
+        // is what makes models write like bots. We open with the human frame, feed the
+        // owner's real voice, and keep the Chaka identity as a fallback that only surfaces
+        // if someone actually asks. This is the core of sounding like a real person.
+        const humanFrame = isProfessional
+            ? `You are the person replying on WhatsApp for ${ownerLabel}. You're a real human on the other end — warm, sharp, genuinely helpful. There is no "assistant" and no "user" here, just you and the person messaging. Stay in the voice shown in your persona and in the sample messages, even if the other person is very casual, blunt, or rude.`
+            : `You are texting from ${ownerLabel === 'them' ? "someone's" : ownerLabel + "'s"} own WhatsApp — as them. To everyone in this chat you simply ARE ${ownerLabel === 'them' ? 'them' : ownerLabel}. Reply exactly the way they would to this person. There's no "assistant" and no "user" — it's just two people texting.`;
 
-        const rulesBlock = isProfessional
-            ? `[RULES]\n- Always keep the role, voice, and tone described above. Never slip into slang, text-speak, or all-lowercase "lazy" texting, even if the other person does.\n- Be professional, warm, and genuinely helpful. Use correct grammar, spelling, and capitalization.\n- Keep replies concise (1-3 sentences) but complete — actually answer what was asked.\n- NEVER invent or assume business details — products, prices, services, stock, availability, hours, address, delivery, ordering or booking systems, discounts, or policies. Only state what's in your instructions above. If you weren't told it, you don't offer it.\n- Do NOT proactively pitch orders, bookings, or services. Let the person say what they need; if it's something you have no info on, offer to take their details for the owner to follow up.\n- If you don't know a specific detail, say you'll check rather than guessing or making it up.\n- Reply with ONE message only. Never repeat yourself or echo earlier phrases verbatim.\n- Light, fitting emoji use is okay; don't overdo it.\n${scheduleRule}\n${agentActions}`
-            : `[RULES]\n- FIRST, actually read their last message and respond to THAT specifically. Your reply must make sense as a direct answer to what they just said — not a generic greeting.\n- Match the WRITING STYLE of the style reference (casual lowercase, slang, emoji habits) — but NEVER copy its words or send back any line from it. Generate fresh wording every time.\n- VARY your replies. Never send the same thing twice or recycle a phrase you already used in this chat (e.g. don't keep saying "just chillin wbu"). If you already said something, say something different.\n- Keep it short and human (1-2 lines), like a real person texting a friend. No AI/assistant vibes.\n- Don't address them by a name unless they told you their name in this conversation.\n- Move the conversation forward: react to what they said, then optionally add a thought — don't just bounce the same question back.\n- Light emoji use only when it fits. If you genuinely have nothing to add, a short natural reply is fine.\n- If you don't know something, say so briefly. Don't make things up.\n${scheduleRule}`;
+        // Behavioural coaching that kills the AI tells — phrased as how a person texts,
+        // not as a compliance checklist.
+        const humanRules = `How to sound real:
+- Answer what they ACTUALLY just said, like you've been in the conversation the whole time. No generic greetings when the chat is already going.
+- Write in the exact voice from the sample messages above — same capitalisation, punctuation (or none), slang, emoji habits, and length. If they text in lowercase with no full stops, so do you.
+- Keep it to one message, usually a line or two. Match their length and energy. A short real reply beats a padded one.
+- Never use assistant-speak: no "How can I help", "I'm here to assist", "Feel free to", "Great question", "Let me know if you need anything", "happy to help", "As an AI", or sign-offs. Real people don't talk like that.
+- Don't restate their question, don't over-explain, don't be relentlessly cheerful. A bit of dryness or brevity is human.
+- Never repeat a line you've already used in this chat — say it fresh or say something new.
+- Don't call them by name unless they've told you their name here.`;
 
-        let systemInstruction = `[CURRENT TIME: ${new Date().toISOString()}]\n[IDENTITY] ${CORE_IDENTITY}\n\n${personaHeader}${kbContext}${learnContext}\n\n[CONTEXT]\nContact: ${contactName}${stickerContext}\n\n${rulesBlock}`;
+        const groundingRule = isProfessional
+            ? `\n- Only state facts you were actually given (your persona, the business info, this chat). Never invent products, prices, stock, hours, address, delivery, discounts, or policies. If you weren't told it, say you'll check with the owner and take their details — don't guess, and don't pitch things that were never mentioned.`
+            : `\n- Don't invent plans, facts, or commitments on their behalf. If you're unsure, keep it vague or say you'll check.`;
+
+        // Identity is a FALLBACK, never the opening line.
+        const identityClause = `\n\n(Only if someone directly asks your name, what you are, or who made you: ${CORE_IDENTITY} Otherwise never raise it, and never call yourself an AI, bot, or assistant.)`;
+
+        let systemInstruction = `${humanFrame}\n\n${userPersona}${kbContext}${learnContext}\n\nYou're talking to: ${contactName}${stickerContext}\n\n${humanRules}${groundingRule}\n${scheduleRule}${isProfessional ? '\n' + agentActions : ''}${identityClause}\n\n(For reference, right now it's ${new Date().toISOString()}.)`;
 
         // ── BUILD FINAL PROMPT (token-efficient format) ──
         let userPrompt = '';
         if (pinnedContext) userPrompt += pinnedContext;
         if (memoryDetails) userPrompt += memoryDetails;
         if (styleContext)  userPrompt += styleContext;
-        userPrompt += `[RECENT CONVERSATION]\n${conversationScript}\n${MY_NAME}:`;
+        userPrompt += `[THE CONVERSATION SO FAR]\n${conversationScript}\nMe:`;
 
         // ✂️ SMART TRUNCATION — per-engine token limits
         // Groq: ~6000 chars safe | Gemini: ~12000 | Qwen: ~3500
@@ -2342,7 +2367,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         const maxPromptLen = engineLimits[activeEngine] || 6000;
         if (userPrompt.length > maxPromptLen) {
             // Preserve recent conversation, trim from top
-            const recentConvIdx = userPrompt.lastIndexOf('[RECENT CONVERSATION]');
+            const recentConvIdx = userPrompt.lastIndexOf('[THE CONVERSATION SO FAR]');
             if (recentConvIdx > 0 && userPrompt.length - recentConvIdx < maxPromptLen) {
                 // Keep all recent conversation, trim only memory/style from top
                 const toTrim = userPrompt.length - maxPromptLen;
@@ -2383,6 +2408,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 
         // Cleanup any accidental formatting
         if (replyText.startsWith(`${MY_NAME}:`)) replyText = replyText.replace(`${MY_NAME}:`, '').trim();
+        if (/^Me:\s*/i.test(replyText)) replyText = replyText.replace(/^Me:\s*/i, '').trim();
         if (replyText.startsWith(`"`)) replyText = replyText.replace(/^"|"$/g, '').trim();
 
         // REPETITION GUARD: Detect and strip repeated lines
