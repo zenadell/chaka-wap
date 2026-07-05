@@ -293,6 +293,65 @@
         </div>
     </div>
 
+    <!-- Personalisation (per-contact history) consent + download modal -->
+    <div id="perso-modal" class="hidden fixed inset-0 z-[10001] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+        <div class="bg-gradient-to-b from-card to-base border border-brandOrange/20 rounded-[28px] w-full max-w-md shadow-2xl relative overflow-hidden">
+            <div class="absolute -top-24 -right-16 w-64 h-64 bg-brandOrange/20 rounded-full blur-[80px] pointer-events-none"></div>
+
+            <!-- ASK state -->
+            <div id="perso-ask" class="p-7 relative">
+                <div class="w-14 h-14 rounded-2xl bg-brandOrange/15 border border-brandOrange/30 flex items-center justify-center mb-5">
+                    <i class="fas fa-fingerprint text-brandOrange text-2xl"></i>
+                </div>
+                <h3 class="text-xl font-extrabold text-white leading-tight">Make replies sound like <span class="text-brandOrange">you</span></h3>
+                <p class="text-textMuted text-sm mt-2 leading-relaxed">Chaka can learn from your recent chats so it replies to each person the way <span class="text-white/80">you</span> actually do — your mum, your best friend, a client — each gets your real vibe with them.</p>
+                <div class="mt-4 space-y-2 text-[13px]">
+                    <div class="flex items-start gap-2.5 text-white/70"><i class="fas fa-lock text-brandOrange text-xs mt-0.5"></i> Encrypted &amp; private to your account. Never shared, never used to train anything shared.</div>
+                    <div class="flex items-start gap-2.5 text-white/70"><i class="fas fa-eraser text-brandOrange text-xs mt-0.5"></i> You can wipe all of it in one tap, anytime.</div>
+                    <div class="flex items-start gap-2.5 text-white/70"><i class="fas fa-bolt text-brandOrange text-xs mt-0.5"></i> <span id="perso-count">Your latest chats</span> stay in sync so it works 24/7.</div>
+                </div>
+                <div class="flex flex-col-reverse sm:flex-row gap-3 mt-7">
+                    <button onclick="declineHistory()" class="flex-1 px-4 py-3 rounded-xl border border-borderMuted text-textMuted text-sm font-semibold hover:text-white hover:border-white/40 transition">Not now</button>
+                    <button onclick="approveHistory()" class="flex-1 px-4 py-3 rounded-xl bg-brandOrange hover:bg-brandOrangeHover text-white text-sm font-bold transition shadow-lg shadow-brandOrange/30 flex items-center justify-center gap-2">
+                        <i class="fas fa-wand-magic-sparkles"></i> Personalise it
+                    </button>
+                </div>
+                <p class="text-[10px] text-textMuted/60 text-center mt-3">You stay in control. Decline and Chaka still works — just less tailored.</p>
+            </div>
+
+            <!-- DOWNLOADING state -->
+            <div id="perso-loading" class="hidden p-8 relative text-center">
+                <div class="relative w-28 h-28 mx-auto mb-5">
+                    <svg class="w-28 h-28 -rotate-90" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="7"></circle>
+                        <circle id="perso-ring" cx="50" cy="50" r="44" fill="none" stroke="#FC5A38" stroke-width="7" stroke-linecap="round"
+                            stroke-dasharray="276.5" stroke-dashoffset="276.5" style="transition:stroke-dashoffset .4s ease"></circle>
+                    </svg>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <span id="perso-pct" class="text-2xl font-extrabold text-white">0%</span>
+                    </div>
+                    <i class="fas fa-brain text-brandOrange absolute -bottom-1 -right-1 text-lg animate-pulse"></i>
+                </div>
+                <h3 class="text-lg font-bold text-white">Learning your style…</h3>
+                <p id="perso-status" class="text-textMuted text-sm mt-1 h-5 transition-all">Reading your recent chats</p>
+                <div class="mt-4 w-full bg-white/5 rounded-full h-1.5 overflow-hidden">
+                    <div id="perso-bar" class="h-full bg-brandOrange rounded-full" style="width:0%;transition:width .4s ease"></div>
+                </div>
+                <p id="perso-sub" class="text-[11px] text-textMuted/70 mt-2">0 of 0 contacts</p>
+            </div>
+
+            <!-- DONE state -->
+            <div id="perso-done" class="hidden p-8 relative text-center">
+                <div class="w-16 h-16 rounded-2xl bg-green-500/15 border border-green-500/30 flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-check text-green-400 text-2xl"></i>
+                </div>
+                <h3 class="text-xl font-extrabold text-white">You're personalised ✨</h3>
+                <p id="perso-done-msg" class="text-textMuted text-sm mt-2">Chaka now knows how you talk to each person.</p>
+                <button onclick="closePerso()" class="mt-6 w-full px-4 py-3 rounded-xl bg-brandOrange hover:bg-brandOrangeHover text-white text-sm font-bold transition">Done</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Mobile Overlay -->
     <div id="mobile-overlay"
         class="fixed inset-0 bg-black/70 z-40 hidden backdrop-blur-sm transition-opacity duration-300 opacity-0"
@@ -450,6 +509,23 @@
                         <input id="contact-search" placeholder="Search by name or number…" class="w-full bg-base border border-borderMuted rounded-xl pl-11 pr-4 py-3 text-sm outline-none focus:border-brandOrange/60" />
                     </div>
                     <div id="contact-results" class="space-y-2 max-h-72 overflow-y-auto"></div>
+                </div>
+
+                <!-- Personalisation & Privacy -->
+                <div class="bg-card rounded-[28px] md:rounded-[36px] p-6 md:p-8 mb-8 border border-borderMuted/40 shadow-xl shrink-0">
+                    <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+                        <h3 class="text-lg md:text-xl font-bold flex items-center gap-2"><i class="fas fa-fingerprint text-brandOrange"></i> Personalisation &amp; Privacy</h3>
+                        <span class="text-[11px] text-textMuted">Your data stays yours</span>
+                    </div>
+                    <p class="text-textMuted text-xs mb-5">Let Chaka learn from your recent chats so it replies to each contact in your voice. Your data is private to your account and you can erase it anytime.</p>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <button onclick="approveHistory()" class="flex-1 bg-brandOrange/10 hover:bg-brandOrange/20 border border-brandOrange/30 text-brandOrange font-bold rounded-xl py-3 text-sm transition flex items-center justify-center gap-2">
+                            <i class="fas fa-wand-magic-sparkles"></i> Re-learn my style
+                        </button>
+                        <button onclick="deleteMyData()" class="flex-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 font-bold rounded-xl py-3 text-sm transition flex items-center justify-center gap-2">
+                            <i class="fas fa-trash-can"></i> Delete my data
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Business Knowledge (business accounts only) -->
@@ -1190,6 +1266,51 @@
         // On phones (one-device users), open the pairing panel by default.
         if (/Android|iPhone|iPad/i.test(navigator.userAgent)) {
             document.getElementById('pairing-panel')?.classList.remove('hidden');
+        }
+
+        // ── PER-CONTACT PERSONALISATION (history consent + animated download) ──
+        let persoSessionId = null;
+        const persoEl = (id) => document.getElementById(id);
+        function showPersoState(state) {
+            ['perso-ask', 'perso-loading', 'perso-done'].forEach(s => persoEl(s).classList.toggle('hidden', s !== state));
+            persoEl('perso-modal').classList.remove('hidden');
+        }
+        function closePerso() { persoEl('perso-modal').classList.add('hidden'); }
+        socket.on('ask_history_consent', (d) => {
+            persoSessionId = d.sessionId;
+            if (d.buffered) persoEl('perso-count').textContent = `Your ${d.buffered > 400 ? 'latest' : ''} recent chats`;
+            showPersoState('perso-ask');
+        });
+        function approveHistory() {
+            showPersoState('perso-loading');
+            socket.emit('approve_history_download', { sessionId: persoSessionId || activeSessionId });
+        }
+        function declineHistory() {
+            socket.emit('decline_history_download', { sessionId: persoSessionId || activeSessionId });
+            closePerso();
+            showToast('No problem — Chaka still works, just less tailored');
+        }
+        socket.on('history_progress', (d) => {
+            const pct = d.total ? Math.round((d.done / d.total) * 100) : 0;
+            persoEl('perso-pct').textContent = pct + '%';
+            persoEl('perso-bar').style.width = pct + '%';
+            persoEl('perso-ring').style.strokeDashoffset = (276.5 * (1 - pct / 100)).toFixed(1);
+            persoEl('perso-sub').textContent = `${d.done} of ${d.total} contacts`;
+            if (d.contactName) persoEl('perso-status').textContent = `Learning how you talk to ${d.contactName}`;
+        });
+        socket.on('history_complete', (d) => {
+            if (d.error) { persoEl('perso-status').textContent = 'Something went wrong — try again later'; setTimeout(closePerso, 2500); return; }
+            persoEl('perso-done-msg').textContent = d.contacts
+                ? `Learned from ${d.contacts} contact${d.contacts > 1 ? 's' : ''} (${d.messages} messages). Replies are now tailored to each person.`
+                : `All set. Chaka will keep learning as you chat.`;
+            showPersoState('perso-done');
+        });
+        socket.on('data_deleted', (d) => {
+            showToast(d.ok ? '🧹 All your stored chat data was deleted' : 'Could not delete — try again');
+        });
+        async function deleteMyData() {
+            const ok = await customConfirm('Delete all stored data?', 'This erases every chat, learned style and note Chaka has stored for your account. This cannot be undone.', 'Delete everything');
+            if (ok) socket.emit('delete_my_data');
         }
 
         // Agents: refresh leads/alerts live as the AI captures them.

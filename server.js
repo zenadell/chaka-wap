@@ -383,6 +383,8 @@ async function initDB() {
     try { await db.exec(`ALTER TABLE users ADD COLUMN country_code TEXT`); } catch (e) { }
     try { await db.exec(`ALTER TABLE users ADD COLUMN city TEXT`); } catch (e) { }
     try { await db.exec(`ALTER TABLE users ADD COLUMN last_active INTEGER`); } catch (e) { }
+    // history_consent: NULL = not yet asked, 1 = approved past-chat download, 0 = declined.
+    try { await db.exec(`ALTER TABLE users ADD COLUMN history_consent INTEGER DEFAULT NULL`); } catch (e) { }
 
     // --- ADMIN SEEDING ---
     const adminExists = await db.get(`SELECT id FROM users WHERE email = ?`, [ADMIN_EMAIL]);
@@ -2691,6 +2693,35 @@ async function startSession(userId, sessionId) {
                 }
             }, 60000);
             if (session) session.watchdogTimer = watchdog;
+
+            // ── PER-CONTACT PERSONALISATION CONSENT ──
+            // Load the owner's prior decision; if they've never been asked, prompt them to
+            // let the AI learn from past chats. WhatsApp's history sync lands right about
+            // now and gets buffered until they answer (see messaging-history.set).
+            (async () => {
+                try {
+                    const u = await db.get(`SELECT history_consent FROM users WHERE id = ?`, [userId]);
+                    const consent = (u && u.history_consent !== null && u.history_consent !== undefined) ? u.history_consent : null;
+                    if (session) session.historyConsent = consent;
+                    // Already-approved re-link: persist anything the sync buffered before we
+                    // loaded the flag, then let future sync events save directly.
+                    if (consent === 1 && session?.pendingHistory?.length) {
+                        const buf = session.pendingHistory; session.pendingHistory = [];
+                        let n = 0; for (const m of buf) { if (await saveMessageToDB(userId, sessionId, m, true)) n++; }
+                        if (n) io.to(userId).emit('log', { sessionId, msg: `✅ Re-synced ${n} past messages.` });
+                    }
+                    if (consent === null && session && !session.historyAsked) {
+                        // Give the history sync a few seconds to arrive, then ask — once per
+                        // session lifetime so reconnect blips don't re-spam the prompt.
+                        session.historyAsked = true;
+                        setTimeout(() => {
+                            const s = sessions.get(globalId);
+                            const buffered = s?.pendingHistory?.length || 0;
+                            io.to(userId).emit('ask_history_consent', { sessionId, buffered });
+                        }, 6000);
+                    }
+                } catch (e) { console.error('consent load failed:', e.message); }
+            })();
         }
     });
 
@@ -2702,18 +2733,40 @@ async function startSession(userId, sessionId) {
         contacts.forEach(c => { if (c.name || c.notify) session.phonebook[c.id] = c.name || c.notify; });
     });
 
+    // WhatsApp pushes past-chat history here on link. This is PERSONAL data, so it is
+    // consent-gated: we only write it to disk once the owner approves the download.
+    // Until then it's held in RAM (session.pendingHistory) and flushed on approval, or
+    // dropped on decline. Live incoming messages (messages.upsert) are unaffected — those
+    // are the ongoing service the owner signed up for.
     sock.ev.on('messaging-history.set', async ({ messages }) => {
-        io.emit('log', { sessionId, msg: `🔄 Decrypting & Saving History Sync to SQLite...` });
-        let totalSaved = 0;
+        // Flatten the payload into individual message objects.
+        const flat = [];
         for (const item of (messages || [])) {
-            if (item.messages && Array.isArray(item.messages)) {
-                for (const msg of item.messages) { if (await saveMessageToDB(globalId, msg, true)) totalSaved++; }
-            } else if (item.key && item.message) {
-                if (await saveMessageToDB(globalId, item, true)) totalSaved++;
-            }
+            if (item.messages && Array.isArray(item.messages)) flat.push(...item.messages);
+            else if (item.key && item.message) flat.push(item);
         }
-        if (totalSaved > 0) io.emit('log', { sessionId, msg: `✅ DB DUMP COMPLETE: ${totalSaved} messages saved to SQLite.` });
-        console.log(`[${globalId}] History Dump Complete: ${totalSaved} saved.`);
+        if (!flat.length) return;
+
+        const session = sessions.get(globalId);
+        if (!session) return;
+        const consent = session.historyConsent; // set on connect from users.history_consent
+
+        if (consent === 1) {
+            // Already approved (e.g. re-link) → persist directly.
+            let saved = 0;
+            for (const msg of flat) { if (await saveMessageToDB(userId, sessionId, msg, true)) saved++; }
+            if (saved > 0) io.emit('log', { sessionId, msg: `✅ Synced ${saved} past messages.` });
+            return;
+        }
+        if (consent === 0) return; // declined — never persist past history
+
+        // Undecided → buffer in RAM (bounded) until the owner answers the consent prompt.
+        if (!session.pendingHistory) session.pendingHistory = [];
+        for (const msg of flat) {
+            if (session.pendingHistory.length >= 4000) break; // hard memory cap
+            session.pendingHistory.push(msg);
+        }
+        io.emit('log', { sessionId, msg: `🗂️ ${session.pendingHistory.length} past messages ready (awaiting your OK to personalise).` });
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -3014,6 +3067,7 @@ async function startSession(userId, sessionId) {
 // --- API ---
 io.on('connection', (socket) => {
     const userId = socket.user.id;
+    socket.join(userId); // per-user room so we can target owner-only events (e.g. consent prompts)
     socket.emit('log', { sessionId: 'SYSTEM', msg: 'System Connected. Token Authenticated.' });
 
     socket.on('list_sessions', () => {
@@ -3109,10 +3163,87 @@ io.on('connection', (socket) => {
         }
     });
 
+    // ── APPROVE: personalise from past chats ──
+    // Flush the buffered WhatsApp history to disk, newest contacts first, emitting live
+    // progress so the UI can animate. Cap at the 20 most-recent contacts × ~25 messages
+    // (free tier) so the personalisation is focused and bounded.
+    socket.on('approve_history_download', async (data) => {
+        if (!userId || !data?.sessionId) return;
+        const globalId = `${userId}_${data.sessionId}`;
+        const session = sessions.get(globalId);
+        try {
+            await db.run(`UPDATE users SET history_consent = 1 WHERE id = ?`, [userId]);
+            if (session) session.historyConsent = 1;
+
+            const buffered = (session && session.pendingHistory) ? session.pendingHistory : [];
+            // Group buffered messages by contact jid, tracking the most recent timestamp.
+            const byJid = new Map();
+            for (const msg of buffered) {
+                const jid = msg?.key?.remoteJid;
+                if (!jid || jid === 'status@broadcast' || jid.includes('@g.us') || jid.includes('@broadcast') || jid.includes('@newsletter')) continue;
+                if (!byJid.has(jid)) byJid.set(jid, []);
+                byJid.get(jid).push(msg);
+            }
+            const MAX_CONTACTS = 20, MAX_PER_CONTACT = 25;
+            // Rank contacts by their most recent message, take the top N.
+            const ranked = [...byJid.entries()]
+                .map(([jid, msgs]) => ({ jid, msgs, latest: Math.max(...msgs.map(m => Number(m.messageTimestamp) || 0)) }))
+                .sort((a, b) => b.latest - a.latest)
+                .slice(0, MAX_CONTACTS);
+
+            const total = ranked.length;
+            io.to(userId).emit('history_progress', { sessionId: data.sessionId, done: 0, total, contactName: '' });
+            let done = 0, totalMsgs = 0;
+            for (const { jid, msgs } of ranked) {
+                // newest messages first, keep the most recent per contact
+                const recent = msgs.sort((a, b) => (Number(b.messageTimestamp) || 0) - (Number(a.messageTimestamp) || 0)).slice(0, MAX_PER_CONTACT);
+                for (const msg of recent) { if (await saveMessageToDB(userId, data.sessionId, msg, true)) totalMsgs++; }
+                done++;
+                const name = session?.phonebook?.[jid] || jid.split('@')[0];
+                io.to(userId).emit('history_progress', { sessionId: data.sessionId, done, total, contactName: name });
+                await delay(120); // let the animation breathe
+            }
+            if (session) session.pendingHistory = []; // free the RAM buffer
+            io.to(userId).emit('history_complete', { sessionId: data.sessionId, contacts: total, messages: totalMsgs });
+            io.to(userId).emit('log', { sessionId: data.sessionId, msg: `🧠 Personalised from ${total} contacts (${totalMsgs} messages).` });
+        } catch (e) {
+            console.error('history download failed:', e.message);
+            io.to(userId).emit('history_complete', { sessionId: data.sessionId, contacts: 0, messages: 0, error: true });
+        }
+    });
+
+    // ── DECLINE: keep it generic, discard the buffered history ──
+    socket.on('decline_history_download', async (data) => {
+        if (!userId) return;
+        try { await db.run(`UPDATE users SET history_consent = 0 WHERE id = ?`, [userId]); } catch (e) {}
+        const session = data?.sessionId ? sessions.get(`${userId}_${data.sessionId}`) : null;
+        if (session) { session.historyConsent = 0; session.pendingHistory = []; }
+    });
+
+    // ── ONE-TAP DELETE: wipe every trace of the owner's message data ──
+    socket.on('delete_my_data', async () => {
+        if (!userId) return;
+        try {
+            for (const t of ['messages', 'knowledge_graph', 'reply_feedback', 'learned_rules', 'leads']) {
+                try { await db.run(`DELETE FROM ${t} WHERE user_id = ?`, [userId]); } catch (e) { /* table may not exist */ }
+            }
+            // also clear any in-RAM buffers across this user's live sessions
+            for (const [gid, s] of sessions.entries()) {
+                if (gid.startsWith(`${userId}_`) && s) s.pendingHistory = [];
+            }
+            await db.run(`UPDATE users SET history_consent = NULL WHERE id = ?`, [userId]);
+            socket.emit('data_deleted', { ok: true });
+            io.emit('log', { sessionId: 'system', msg: `🧹 All stored chat data deleted for this account.` });
+        } catch (e) {
+            console.error('delete_my_data failed:', e.message);
+            socket.emit('data_deleted', { ok: false });
+        }
+    });
+
     socket.on('delete_session', (id) => {
         if (!id || !userId) return;
         const globalId = `${userId}_${id}`;
-        const s = sessions.get(globalId); 
+        const s = sessions.get(globalId);
         if (s && s.sock) {
             try { s.sock.end(undefined); } catch (e) {}
         }
