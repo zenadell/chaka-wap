@@ -3512,6 +3512,15 @@ server.listen(PORT, '0.0.0.0', async () => {
             if (parts.length >= 2) {
                 const userId = parts[0];
                 const id = parts.slice(1).join('_');
+                // Scrub ORPHANS: if the owning account no longer exists (e.g. it was deleted
+                // or the DB was reset), don't resurrect its WhatsApp session — remove it.
+                // This is what makes a deleted node/account actually stay gone across reboots.
+                const owner = await db.get(`SELECT id FROM users WHERE id = ?`, [userId]);
+                if (!owner) {
+                    console.log(`[SCRUBBER] Orphaned session (user ${userId} no longer exists) — deleting ${f}`);
+                    try { fs.rmSync(`./data/${f}`, { recursive: true, force: true }); } catch (e) {}
+                    continue;
+                }
                 if (userId && id && !sessions.has(globalId)) {
                     console.log(`[BOOT] Waking node: ${id} for user: ${userId}`);
                     startSession(userId, id);
