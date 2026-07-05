@@ -3096,17 +3096,24 @@ io.on('connection', (socket) => {
         if (s) socket.emit('status', { sessionId: id, status: s.connectionState || (s.isConnected ? 'connected' : 'connecting') });
     });
 
+    // Manual recovery for a stuck / failed node — a clean-slate retry that reuses the
+    // SAME node (no need to create a new one). Resets the backoff counter and clears any
+    // pending timers so it isn't immediately dragged back into 'failure'.
     socket.on('resume_session', (id) => {
         if (!id || !userId) return;
         const globalId = `${userId}_${id}`;
-        if (!sessions.has(globalId)) {
-            startSession(userId, id);
-        } else {
-            const s = sessions.get(globalId);
-            if (!s.isConnected && s.connectionState !== 'connecting' && s.connectionState !== 'qr_ready') {
-                startSession(userId, id);
-            }
+        RECONNECT_ATTEMPTS.set(globalId, 0); // clean slate on an explicit user retry
+        const s = sessions.get(globalId);
+        if (s) {
+            if (s.handshakeTimer) { try { clearTimeout(s.handshakeTimer); } catch (e) {} }
+            if (s.watchdogTimer) { try { clearInterval(s.watchdogTimer); } catch (e) {} }
+            if (s.isConnected || s.connectionState === 'connecting' || s.connectionState === 'qr_ready') return; // already fine/working
+            // Tear down the dead socket so startSession builds a fresh one.
+            if (s.sock) { try { s.sock.end(undefined); } catch (e) {} }
+            sessions.delete(globalId);
         }
+        io.to(userId).emit('status', { sessionId: id, status: 'initializing' });
+        startSession(userId, id);
     });
 
     socket.on('create_session', (id) => { 
