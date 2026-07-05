@@ -2564,10 +2564,16 @@ async function startSession(userId, sessionId) {
         },
         logger,
         printQRInTerminal: false,
-        // MUST stay false: syncFullHistory:true adds requireFullSync to the registration,
-        // which breaks the pairing-code companion handshake ("Couldn't link device", 408→401).
-        // History is pulled on demand via fetchMessageHistory after the socket is connected.
+        // syncFullHistory MUST stay false — true adds requireFullSync to the registration and
+        // breaks the pairing handshake ("Couldn't link device", 408→401).
         syncFullHistory: false,
+        // BUT process the history WhatsApp DOES send. shouldSyncHistoryMessage defaults to
+        // false when syncFullHistory is false, which makes Baileys skip the RECENT sync
+        // entirely (chats.js:872 "History sync is disabled... Transitioning to Online") — the
+        // real reason downloads got 0. This is a client-side FILTER only; it does NOT touch
+        // the registration payload, so it cannot affect pairing. Returning true lets the
+        // RECENT on-link sync AND on-demand fetchMessageHistory results through.
+        shouldSyncHistoryMessage: () => true,
         browser: browserId,
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: false,
