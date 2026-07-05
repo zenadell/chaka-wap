@@ -3293,20 +3293,31 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('delete_session', (id) => {
+    // Delete a node AND every trace of its data (chats, learned style, contacts, etc.).
+    socket.on('delete_session', async (id) => {
         if (!id || !userId) return;
         const globalId = `${userId}_${id}`;
         const s = sessions.get(globalId);
-        if (s && s.sock) {
-            try { s.sock.end(undefined); } catch (e) {}
+        if (s) {
+            if (s.handshakeTimer) { try { clearTimeout(s.handshakeTimer); } catch (e) {} }
+            if (s.watchdogTimer) { try { clearInterval(s.watchdogTimer); } catch (e) {} }
+            if (s.sock) { try { s.sock.end(undefined); } catch (e) {} }
         }
-        sessions.delete(globalId);
-        try { 
+        sessions.delete(globalId); // remove from map BEFORE rm so the close handler no-ops (no reconnect)
+
+        // 1) Unlink the WhatsApp device (delete auth folder)
+        try {
             const path = `./data/auth_baileys_${globalId}`;
-            fs.rmSync(path, { recursive: true, force: true }); 
+            fs.rmSync(path, { recursive: true, force: true });
             console.log(`[SYSTEM] Deleted persistent session folder: ${path}`);
         } catch (e) { }
+
+        // 2) Wipe all of this node's stored data (scoped to this user + session only)
+        for (const t of ['messages', 'contacts', 'knowledge_graph', 'reply_feedback', 'leads', 'notifications', 'scheduled_messages', 'stickers']) {
+            try { await db.run(`DELETE FROM ${t} WHERE user_id = ? AND session_id = ?`, [userId, id]); } catch (e) { /* table may lack the column */ }
+        }
         socket.emit('session_deleted', id);
+        socket.emit('log', { sessionId: id, msg: `🗑️ Node "${id}" and all its data permanently deleted.` });
     });
 
     socket.on('get_config', async (sessionId) => {

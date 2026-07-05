@@ -1189,8 +1189,9 @@
                 statusHtml += `<button onclick="resumeActiveSession()" class="ml-3 px-3 py-1 bg-brandOrange text-white text-[9px] font-bold rounded-lg hover:bg-brandOrangeHover transition-colors scale-90"><i class="fas fa-rotate-right mr-1"></i> Reconnect</button>`;
                 statusHtml += `<button onclick="removeNode()" class="ml-1 px-3 py-1 bg-red-500/15 text-red-400 text-[9px] font-bold rounded-lg hover:bg-red-500/25 transition-colors scale-90" title="Delete this node"><i class="fas fa-trash-can"></i></button>`;
             } else if (isOnline) {
-                // If connected, show a Refresh button to force a reconnection
+                // If connected, offer a manual reconnect and a delete-node option.
                 statusHtml += `<button onclick="refreshConnection()" class="ml-3 px-3 py-1 bg-white/10 text-white text-[9px] font-bold rounded-lg hover:bg-white/20 transition-colors scale-90" title="Force a reconnect if stuck"><i class="fas fa-sync-alt mr-1"></i> Sync Connection</button>`;
+                statusHtml += `<button onclick="removeNode()" class="ml-1 px-3 py-1 bg-red-500/15 text-red-400 text-[9px] font-bold rounded-lg hover:bg-red-500/25 transition-colors scale-90" title="Delete this node & all its data"><i class="fas fa-trash-can"></i></button>`;
             }
             statusBadge.innerHTML = statusHtml;
 
@@ -1406,11 +1407,14 @@
 
         async function removeNode() {
             if (!activeSessionId) return;
-            const ok = await customConfirm('Remove this node?', 'This deletes the node and unlinks its WhatsApp. You can add a fresh one anytime. Your other nodes are unaffected.', 'Remove node');
+            const ok = await customConfirm(
+                `Delete "${activeSessionId}" & all its data?`,
+                "This unlinks the WhatsApp device and PERMANENTLY deletes everything this node has stored — all downloaded chats, learned style, contacts, leads and notes. This cannot be undone. Your other nodes are not affected.",
+                'Delete node & all data');
             if (!ok) return;
             socket.emit('delete_session', activeSessionId);
-            showToast('Node removed');
-            setTimeout(() => location.reload(), 800);
+            showToast('🗑️ Node & all its data deleted');
+            setTimeout(() => location.reload(), 900);
         }
 
         function refreshConnection() {
