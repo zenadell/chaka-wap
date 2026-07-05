@@ -2548,15 +2548,15 @@ async function startSession(userId, sessionId) {
     const phonebook = {};
     const logger = require('pino')({ level: 'silent' });
 
-    // Unlinked nodes use a WEB browser identity ('Chrome') so:
-    //  - Pairing code works: companion_platform_id = getPlatformId(browser[1]) = CHROME(1).
-    //    ('Desktop' → DESKTOP(7) makes WhatsApp reject the link with "Couldn't link device".)
-    //  - The connection is accepted. IMPORTANT: a 'Mac OS'/'Windows' browser[0] COMBINED with
-    //    syncFullHistory:true makes Baileys claim a DARWIN/WIN32 desktop client requiring full
-    //    sync, which WhatsApp REJECTS at handshake with status 428 (no QR ever appears).
-    //    'Ubuntu' → WEB_BROWSER, which links reliably. History is fetched separately, on
-    //    demand (fetchMessageHistory), so we don't need the fragile desktop-platform trick.
-    const browserId = state.creds.registered ? Browsers.macOS('Desktop') : Browsers.ubuntu('Chrome');
+    // One WEB-browser identity for every node (matches the proven-working v2 bot config
+    // `["Temple AI","Chrome","1.0.0"]`). Why this exact shape:
+    //  - browser[0]='Chaka' is NOT in Baileys' PLATFORM_MAP → webSubPlatform=WEB_BROWSER.
+    //    (A 'Mac OS'/'Windows' browser[0] + syncFullHistory:true claims a DARWIN/WIN32 desktop
+    //    client, which WhatsApp REJECTS at handshake with status 428 → no QR ever appears.)
+    //  - browser[1]='Chrome' → getPlatformId('Chrome')=CHROME(1), the web companion the
+    //    pairing-code flow needs ('Desktop' → DESKTOP(7) = "Couldn't link device").
+    // This identity links reliably AND (with syncFullHistory below) receives full history.
+    const browserId = ['Chaka', 'Chrome', '1.0.0'];
 
     const sock = makeWASocket({
         version,
@@ -2566,11 +2566,10 @@ async function startSession(userId, sessionId) {
         },
         logger,
         printQRInTerminal: false,
-        // syncFullHistory MUST stay false with a web ('Ubuntu') browser: turning it on only
-        // does anything with a desktop browser[0], and that combo triggers the 428 handshake
-        // rejection that blocked linking. Past chats are pulled on demand via
-        // fetchMessageHistory after the socket is connected (see personalisation flow).
-        syncFullHistory: false,
+        // Request full past-chat history on link. Safe here because browserId is a WEB
+        // identity (not a desktop platform), so this sets requireFullSync WITHOUT the 428
+        // that a desktop-platform claim triggers. This is what feeds per-contact learning.
+        syncFullHistory: true,
         browser: browserId,
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: false,
