@@ -2224,6 +2224,16 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         );
         const recentHistory = recentHistoryRows.reverse();
 
+        // ── REGISTER ANALYSIS (deterministic — prompt rules alone kept losing to the
+        // pidgin/emoji-heavy style samples, so we MEASURE how this contact writes and
+        // enforce it in code: language directive + sample filtering + emoji governor). ──
+        const contactRecentText = recentHistory.filter(h => !h.is_from_me).slice(-5).map(h => h.text || '').join(' \n ');
+        const PIDGIN_STRONG = /\b(dey|wetin|abeg|wahala|sabi|una|jare|biko|oya|shey|wan|gats|comot|yarn)\b/i;
+        const PIDGIN_WEAK_G = /\b(na|don|wey|abi|omo|ehn|sef)\b/gi;
+        const contactSpeaksPidgin = PIDGIN_STRONG.test(contactRecentText)
+            || ((contactRecentText.match(PIDGIN_WEAK_G) || []).length >= 3);
+        const contactUsesEmoji = /\p{Extended_Pictographic}/u.test(contactRecentText);
+
         // ══════════════════════════════════════════════════
         // ADVANCED 3-LAYER MEMORY SYSTEM
         //
@@ -2314,16 +2324,10 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
                     [sessionId, contactId, ...params]
                 );
             }
-            // Always include a few general facts if few keyword matches
-            if (graphFacts.length < 5) {
-                const extraFacts = await db.all(
-                    `SELECT subject, predicate, object FROM knowledge_graph 
-                     WHERE session_id = ? AND contact_id = ? 
-                     ORDER BY timestamp DESC LIMIT ?`, 
-                    [sessionId, contactId, 5 - graphFacts.length]
-                );
-                graphFacts = graphFacts.concat(extraFacts);
-            }
+            // NO unconditional filler: previously we always padded to 5 "recent facts",
+            // which injected old-project facts (apex etc.) into EVERY message — even "Hey" —
+            // and the model kept resurrecting them. Facts now appear ONLY when the current
+            // message actually keyword-matches them.
             if (graphFacts.length > 0) {
                 // Neutralise legacy facts extracted under the internal MY_NAME label —
                 // "Temple" in old triples means THE OWNER, not a person in this chat.
@@ -2384,7 +2388,20 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         if (includeStyle) {
             const styleSamples = await fetchUserStyleSamples(userId, sessionId, contactId);
             if (styleSamples) {
-                styleContext = `[HOW ${ownerLabel} REALLY TEXTS — actual messages ${ownerLabel} has sent (possibly to OTHER people). Mirror the mechanics: capitalisation (or all-lowercase), skipped punctuation, message length, rhythm. BUT the LANGUAGE, dialect and level of formality of your reply must follow THIS conversation with ${contactName} — if these samples are slangy/pidgin but this chat is plain or formal English, write plain English. Never quote these lines back.]\n${styleSamples}\n\n`;
+                // Examples beat instructions: if this contact writes plain English, showing the
+                // model pidgin-heavy samples makes it write pidgin no matter what the rules say.
+                // So FILTER the samples to match the contact's register; if none survive, keep
+                // just the two shortest (for length/rhythm) — the language directive at the end
+                // of the prompt then owns the language.
+                let sampleLines = styleSamples.split('\n').filter(Boolean);
+                if (!contactSpeaksPidgin) {
+                    const plain = sampleLines.filter(l => !PIDGIN_STRONG.test(l) && (l.match(PIDGIN_WEAK_G) || []).length === 0);
+                    sampleLines = plain.length >= 2 ? plain : [...sampleLines].sort((a, b) => a.length - b.length).slice(0, 2);
+                }
+                if (!contactUsesEmoji) {
+                    sampleLines = sampleLines.map(l => l.replace(/\p{Extended_Pictographic}/gu, '').trim()).filter(Boolean);
+                }
+                styleContext = `[HOW ${ownerLabel} REALLY TEXTS — actual messages ${ownerLabel} has sent (possibly to OTHER people). Mirror the mechanics: capitalisation (or all-lowercase), skipped punctuation, message length, rhythm. BUT the LANGUAGE, dialect and level of formality of your reply must follow THIS conversation with ${contactName}. Never quote these lines back.]\n${sampleLines.join('\n')}\n\n`;
             }
         }
 
@@ -2496,6 +2513,8 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 - MIRROR THIS CHAT, NOT YOUR OTHER CHATS. The language, dialect and register of your reply come from THIS conversation and THIS contact's samples ONLY. If this chat is in plain English, write plain, correct English — do NOT slip in pidgin, slang, or casual banter imported from how the owner talks to other people. If this chat IS in pidgin, UK roadman slang, formal English, French — whatever it is — write exactly that. Some contacts are serious/professional: with them, be serious. Read the room from the messages below.
 - EMOJIS: copy THIS contact's chat, not a habit. Most of your texts should have NONE. Never end every message with 😂 (or any emoji), and never use the same emoji twice in a row. If this conversation barely uses emojis, use none at all. One fitting emoji occasionally is the ceiling.
 - BANNED AS CRUTCHES: starting messages with "ey", "eyy", "eh", or dropping "lmao"/"lol" into every reply. Use those ONLY if this specific conversation already talks like that — and even then, not twice in a row.
+- READ THEIR MOOD. If they sound annoyed, serious, or tell you to stop doing something — stop INSTANTLY: drop all jokes, drop all emojis, answer plainly and briefly. Nothing is more robotic than joking at someone who's irritated.
+- NEVER present old memory as what you're doing right now. If they ask "what are you doing / what's up" and the recent conversation doesn't say, keep it light and vague ("nothing much, you?") — do NOT dig up projects or events from days ago and present them as happening now.
 - If you're genuinely not sure what they mean, ask a short natural question instead of guessing or waffling.
 - Answer like you've been in the conversation the whole time. No generic greetings when the chat is already going.
 - Write in the exact voice from the sample messages above — same capitalisation, punctuation (or none), and length. If they text in lowercase with no full stops, so do you. But the LANGUAGE itself always follows this chat (see MIRROR THIS CHAT).
@@ -2530,7 +2549,12 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             ? `\n\n[YOUR OWNER'S INSTRUCTIONS — AUTHORITATIVE. The owner personally wrote this for you. Follow it exactly, even where it conflicts with style-mirroring or any generic rule below:]\n${userPersona}`
             : '';
 
-        let systemInstruction = `${humanFrame}${personaBlock}${kbContext}${learnContext}\n\nYou're talking to: ${contactName}${stickerContext}\n\n${humanRules}${groundingRule}\n${scheduleRule}${isProfessional ? '\n' + agentActions : ''}${identityClause}\n\n(For reference, right now it's ${new Date().toISOString()}.)`;
+        // MEASURED language directive, placed LAST in the prompt (recency = weight).
+        // Built from what the contact actually wrote, so it can't be argued with.
+        const languageDirective = contactSpeaksPidgin ? '' :
+            `\n\nFINAL LANGUAGE CHECK — this overrides the style samples and everything else: ${contactName}'s recent messages are in plain English, NOT pidgin. Your reply must be plain, natural English only. Zero pidgin words ("dey", "wetin", "na", "abeg", "don", "wahala", "boss", "o").${contactUsesEmoji ? '' : ` ${contactName} also isn't using emojis — use none.`}`;
+
+        let systemInstruction = `${humanFrame}${personaBlock}${kbContext}${learnContext}\n\nYou're talking to: ${contactName}${stickerContext}\n\n${humanRules}${groundingRule}\n${scheduleRule}${isProfessional ? '\n' + agentActions : ''}${identityClause}\n\n(For reference, right now it's ${new Date().toISOString()}.)${languageDirective}`;
 
         // ── BUILD FINAL PROMPT (token-efficient format) ──
         let userPrompt = '';
@@ -2616,6 +2640,32 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             const cleaned = kept.join('\n').trim();
             if (cleaned) replyText = cleaned;
         }
+
+        // ── EMOJI GOVERNOR (deterministic — the model kept 😂-ing despite every rule) ──
+        // Enforced in code so it can't be ignored:
+        //  • contact's recent messages have no emoji → this reply gets NONE.
+        //  • our previous reply had an emoji → this one gets NONE (never two in a row).
+        //  • otherwise → at most ONE emoji, runs of the same emoji collapsed.
+        try {
+            const EMOJI_G = /\p{Extended_Pictographic}\u{FE0F}?/gu;
+            replyText = replyText.replace(/(\p{Extended_Pictographic})(\s*\1)+/gu, '$1'); // 😂😂😂 → 😂
+            let stripAll = !contactUsesEmoji;
+            if (!stripAll) {
+                const lastBot = await db.get(
+                    `SELECT text FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ?
+                     AND (sender = 'BOT' OR message_id LIKE 'BOT_%') AND is_from_me = 1
+                     ORDER BY timestamp DESC LIMIT 1`, [sessionId, contactId, userId]);
+                if (lastBot && /\p{Extended_Pictographic}/u.test(lastBot.text || '')) stripAll = true;
+            }
+            if (stripAll) {
+                replyText = replyText.replace(EMOJI_G, '').replace(/\u{200D}/gu, '');
+            } else {
+                let used = false;
+                replyText = replyText.replace(EMOJI_G, m => (used ? '' : (used = true, m)));
+            }
+            replyText = replyText.replace(/[ \t]{2,}/g, ' ').replace(/ +\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        } catch (e) { /* governor is best-effort; never blocks the reply */ }
+        if (!replyText) return null;
 
         // Track spending and burst stats
         const usedTokens = Math.ceil(userPrompt.length / 4) + Math.ceil(replyText.length / 4);
