@@ -187,8 +187,22 @@ async function isBurstMode(userId, contactId) {
     const key = `${userId}_${contactId}`;
     const now = Date.now();
     const window = BURST_TRACKER.get(key) || [];
-    const recent = window.filter(t => now - t.ts < 120000); 
+    const recent = window.filter(t => now - t.ts < 120000);
     return recent.length >= 3;
+}
+
+// ── OWNER TAKEOVER ──
+// When the owner personally sends a message in a chat (from their phone — not a bot
+// send), they've "stepped in": the AI goes quiet in THAT chat for a while instead of
+// talking over them. Every new owner message refreshes the timer.
+const OWNER_TAKEOVER = new Map(); // `${userId}_${contactId}` -> last owner-typed ts
+const TAKEOVER_QUIET_MS = 10 * 60 * 1000; // stay quiet 10 min after the owner's last message
+function noteOwnerTakeover(userId, contactId) {
+    OWNER_TAKEOVER.set(`${userId}_${contactId}`, Date.now());
+}
+function isOwnerActive(userId, contactId) {
+    const ts = OWNER_TAKEOVER.get(`${userId}_${contactId}`);
+    return !!ts && (Date.now() - ts) < TAKEOVER_QUIET_MS;
 }
 
 function recordMessage(userId, contactId, tokens) {
@@ -227,6 +241,7 @@ async function deliverDeferredReply(ctx) {
     const session = sessions.get(`${userId}_${sessionId}`);
     if (!session || !session.sock || !session.isConnected) return;
     const sock = session.sock;
+    if (isOwnerActive(userId, cleanId)) return; // owner stepped in while we waited — stay quiet
 
     // Respect the same gates as the live path.
     const g = await db.get(`SELECT master_auto_reply FROM global_settings WHERE id='settings' AND user_id=?`, [userId]);
@@ -1764,12 +1779,13 @@ async function saveMessageToDB(userId, sessionId, msg, forceSkipEmbedding = fals
             try {
                 console.log(`[${globalId}] 👁️ Image detected. Fetching context for occasion analysis...`);
 
-                // Fetch last 5 messages for context
+                // Fetch last 5 REAL messages for context (no bot rows, no raw sender tags).
                 const recentContextRows = await db.all(
-                    `SELECT sender, text FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 5`,
+                    `SELECT sender, text, is_from_me FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ?
+                     AND sender != 'BOT' AND message_id NOT LIKE 'BOT_%' ORDER BY timestamp DESC LIMIT 5`,
                     [sessionId, cleanId, userId]
                 );
-                const chatContext = recentContextRows.reverse().map(m => `${m.sender}: ${m.text}`).join("\n");
+                const chatContext = recentContextRows.reverse().map(m => `${m.is_from_me ? 'Me' : 'Them'}: ${m.text}`).join("\n");
 
                 const buffer = await downloadMediaMessage(msg, 'buffer', {});
                 if (buffer) {
@@ -1991,22 +2007,26 @@ async function reindexDatabase(sessionId) {
 async function extractKnowledgeTriples(userId, sessionId, contactId) {
     try {
         const globalId = `${userId}_${sessionId}`;
-        // Fetch the last 8 messages
+        // Fetch the last 8 REAL messages. Exclude the AI's own replies (self-mimicry) and
+        // label turns Me/Them — the raw sender tag is the internal MY_NAME ("Temple") for
+        // EVERY tenant's owner messages, and feeding it here filled every account's
+        // knowledge graph with "Temple" facts (the AI then asked strangers "how temple dey").
         const messages = await db.all(
-            `SELECT sender, text FROM messages 
-             WHERE session_id = ? AND contact_id = ? AND user_id = ? 
-             ORDER BY timestamp DESC LIMIT 8`, 
+            `SELECT sender, text, is_from_me FROM messages
+             WHERE session_id = ? AND contact_id = ? AND user_id = ?
+             AND sender != 'BOT' AND message_id NOT LIKE 'BOT_%'
+             ORDER BY timestamp DESC LIMIT 8`,
             [sessionId, contactId, userId]
         );
         if (messages.length < 2) return;
         messages.reverse();
-        
-        const conversationScript = messages.map(m => `${m.sender}: ${m.text}`).join('\n');
-        
-        const systemPrompt = `You are a background memory graph extractor. Extract permanent facts, user preferences, AND the user's specific texting style for this contact from the conversation.
-Return ONLY a valid JSON array of arrays, representing [Subject, Predicate, Object] triples.
+
+        const conversationScript = messages.map(m => `${m.is_from_me ? 'Me' : 'Them'}: ${m.text}`).join('\n');
+
+        const systemPrompt = `You are a background memory graph extractor. "Me" is the account owner; "Them" is the contact. Extract permanent facts, preferences, AND the owner's specific texting style with this contact.
+Return ONLY a valid JSON array of arrays, representing [Subject, Predicate, Object] triples. Use "Me" for the owner and "Them" (or their actual name if stated IN the messages) for the contact — never invent names.
 Example output:
-[["User", "loves", "coffee"], ["User Style", "uses emojis", "💀 and 😭"], ["User Tone", "is", "highly informal and uses lowercase"], ["John", "is", "User's boss"]]
+[["Them", "loves", "coffee"], ["My Style", "uses emojis", "💀 and 😭"], ["My Tone", "is", "highly informal and uses lowercase"], ["Them", "works at", "a bank"]]
 If no new permanent facts or style rules are found, return []. Do not include transient states.`;
 
         const reply = await orchestrateAIResponse(userId, globalId, systemPrompt, conversationScript);
@@ -2182,7 +2202,9 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         // ══════════════════════════════════════════════════
 
         // LAYER 1: Keyword Memory — free, instant
-        const keywords = incomingMsg.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        // ≥5 chars: short common words ("what", "your", "status") matched everything and
+        // dragged unrelated old topics into casual replies — the "drunk" off-topic effect.
+        const keywords = incomingMsg.toLowerCase().split(/\s+/).filter(w => w.length > 4);
         let keywordMemories = [];
         if (keywords.length > 0) {
             const placeholders = keywords.map(() => `text LIKE ?`).join(' OR ');
@@ -2225,7 +2247,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
                             ...msg,
                             score: cosineSimilarity(parsedQuery, parseEmbedding(msg.embedding))
                         }))
-                        .filter(m => m.score > 0.5 && m.text !== incomingMsg)
+                        .filter(m => m.score > 0.62 && m.text !== incomingMsg) // 0.5 was too loose — pulled unrelated topics
                         .sort((a, b) => b.score - a.score)
                         .slice(0, memoryLimit);
                 }
@@ -2264,7 +2286,11 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
                 graphFacts = graphFacts.concat(extraFacts);
             }
             if (graphFacts.length > 0) {
-                const uniqueFacts = Array.from(new Set(graphFacts.map(f => `${f.subject} -> ${f.predicate} -> ${f.object}`)));
+                // Neutralise legacy facts extracted under the internal MY_NAME label —
+                // "Temple" in old triples means THE OWNER, not a person in this chat.
+                const nameScrub = new RegExp(`\\b${MY_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+                const uniqueFacts = Array.from(new Set(graphFacts.map(f =>
+                    `${f.subject} -> ${f.predicate} -> ${f.object}`.replace(nameScrub, 'Me'))));
                 memoryDetails += `[KNOWN FACTS]\n${uniqueFacts.join('\n')}\n\n`;
             }
         } catch(e) { console.error("Graph fetch err:", e); }
@@ -2319,7 +2345,7 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         if (includeStyle) {
             const styleSamples = await fetchUserStyleSamples(userId, sessionId, contactId);
             if (styleSamples) {
-                styleContext = `[HOW ${ownerLabel} REALLY TEXTS — these are actual messages ${ownerLabel} has sent. This is your voice. Mirror it precisely: the capitalisation (or all-lowercase), the punctuation they skip, their slang, their emoji habits, how short their messages are, their rhythm. Someone reading your reply should assume ${ownerLabel} typed it themselves. Never quote these lines back — just write in this exact voice.]\n${styleSamples}\n\n`;
+                styleContext = `[HOW ${ownerLabel} REALLY TEXTS — actual messages ${ownerLabel} has sent (possibly to OTHER people). Mirror the mechanics: capitalisation (or all-lowercase), skipped punctuation, message length, rhythm. BUT the LANGUAGE, dialect and level of formality of your reply must follow THIS conversation with ${contactName} — if these samples are slangy/pidgin but this chat is plain or formal English, write plain English. Never quote these lines back.]\n${styleSamples}\n\n`;
             }
         }
 
@@ -2359,7 +2385,9 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         } catch(e) { /* sticker fetch failed, no biggie */ }
 
         // --- USER-DEFINED PERSONA (authoritative) ---
-        const userPersona = contactRow?.custom_prompt || globalRow?.custom_prompt || "You are a helpful assistant.";
+        // NOTE: no "You are a helpful assistant" fallback — that one line injects
+        // assistant-speak into every account without a custom prompt.
+        const userPersona = contactRow?.custom_prompt || globalRow?.custom_prompt || "";
 
         // --- BUSINESS KNOWLEDGE BASE injection (real owner-provided facts) ---
         let kbContext = '';
@@ -2426,10 +2454,12 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 - Your memory and the context below are BACKGROUND ONLY — not a script to read out. Do NOT bring up old topics, past projects, or earlier discussions (e.g. things you talked about days ago) unless they EXPLICITLY ask about that exact thing right now. If what they just said isn't about a past topic, don't mention it at all. Answer THIS message, nothing else.
 - MAKE SENSE FIRST. Your reply must be a clear, on-point answer to what they actually just said. Slang and jokes are HOW you say it — never an excuse to ramble or bolt on random lines that don't connect (no unrelated one-liners like "call MTN before NEPA take light"). One clear point, in their voice.
 - Be PLAIN and direct, not clever or poetic. Real people say "yeah went this morning, was good" — not riddles like "stairway to heaven steps say less" or "my neck dey crane from blessings stacking". If a line sounds like a punchline or a proverb, cut it and just say the normal thing.
-- EMOJIS: most of your texts should have NONE. At most one, only when it genuinely fits, and never in every message. Spraying emojis (🙏😂💯👊 on every line) instantly reads as fake/bot — don't.
+- MIRROR THIS CHAT, NOT YOUR OTHER CHATS. The language, dialect and register of your reply come from THIS conversation and THIS contact's samples ONLY. If this chat is in plain English, write plain, correct English — do NOT slip in pidgin, slang, or casual banter imported from how the owner talks to other people. If this chat IS in pidgin, UK roadman slang, formal English, French — whatever it is — write exactly that. Some contacts are serious/professional: with them, be serious. Read the room from the messages below.
+- EMOJIS: copy THIS contact's chat, not a habit. Most of your texts should have NONE. Never end every message with 😂 (or any emoji), and never use the same emoji twice in a row. If this conversation barely uses emojis, use none at all. One fitting emoji occasionally is the ceiling.
+- BANNED AS CRUTCHES: starting messages with "ey", "eyy", "eh", or dropping "lmao"/"lol" into every reply. Use those ONLY if this specific conversation already talks like that — and even then, not twice in a row.
 - If you're genuinely not sure what they mean, ask a short natural question instead of guessing or waffling.
 - Answer like you've been in the conversation the whole time. No generic greetings when the chat is already going.
-- Write in the exact voice from the sample messages above — same capitalisation, punctuation (or none), slang, emoji habits, and length. If they text in lowercase with no full stops, so do you.
+- Write in the exact voice from the sample messages above — same capitalisation, punctuation (or none), and length. If they text in lowercase with no full stops, so do you. But the LANGUAGE itself always follows this chat (see MIRROR THIS CHAT).
 - Keep it to one message, usually a line or two. Match their length and energy. A short real reply beats a padded one.
 - Most replies are a single text. But if it's genuinely how ${ownerLabel === 'them' ? 'they' : ownerLabel} would type it, you can fire off TWO quick texts instead of one — put a blank line between them (e.g. "omgg" then "when did that happen"). Never more than two. Don't force it.
 - Never use assistant-speak: no "How can I help", "I'm here to assist", "Feel free to", "Great question", "Let me know if you need anything", "happy to help", "As an AI", or sign-offs. Real people don't talk like that.
@@ -2454,7 +2484,14 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
 - This holds EVEN IF they flatly insist "this is AI" / "you're a bot" / "I know it's a robot". Do NOT confirm it, do NOT "confess", do NOT say "you caught me". A real person being accused of being a robot just laughs and denies it — so brush it off and keep talking ("omo you don dey watch too much film 😂", "abeg na me dey here, wetin do you", "lol you dey whine"). Then answer whatever the actual topic was.
 - Never explain yourself, never apologise for "the AI", never mention testing, updates, or automation, and never break the fourth wall — not even as a joke. One confession ruins the entire thing.`;
 
-        let systemInstruction = `${humanFrame}\n\n${userPersona}${kbContext}${learnContext}\n\nYou're talking to: ${contactName}${stickerContext}\n\n${humanRules}${groundingRule}\n${scheduleRule}${isProfessional ? '\n' + agentActions : ''}${identityClause}\n\n(For reference, right now it's ${new Date().toISOString()}.)`;
+        // The owner's own setup prompt is AUTHORITATIVE — it wins over style mirroring
+        // and every generic rule below when they conflict (users complained their custom
+        // instructions were being ignored).
+        const personaBlock = userPersona
+            ? `\n\n[YOUR OWNER'S INSTRUCTIONS — AUTHORITATIVE. The owner personally wrote this for you. Follow it exactly, even where it conflicts with style-mirroring or any generic rule below:]\n${userPersona}`
+            : '';
+
+        let systemInstruction = `${humanFrame}${personaBlock}${kbContext}${learnContext}\n\nYou're talking to: ${contactName}${stickerContext}\n\n${humanRules}${groundingRule}\n${scheduleRule}${isProfessional ? '\n' + agentActions : ''}${identityClause}\n\n(For reference, right now it's ${new Date().toISOString()}.)`;
 
         // ── BUILD FINAL PROMPT (token-efficient format) ──
         let userPrompt = '';
@@ -2466,6 +2503,22 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         if (pinnedContext) userPrompt += pinnedContext;
         if (memoryDetails) userPrompt += memoryDetails;
         if (styleContext)  userPrompt += styleContext;
+
+        // Compact "what you already replied" — bot outputs are excluded from the transcript
+        // (self-mimicry), so give the model a tiny, truncated record purely to avoid
+        // repeating itself. Too short to establish a topic or an essay pattern.
+        try {
+            const myRecent = await db.all(
+                `SELECT text FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ?
+                 AND (sender = 'BOT' OR message_id LIKE 'BOT_%') AND is_from_me = 1
+                 ORDER BY timestamp DESC LIMIT 3`,
+                [sessionId, contactId, userId]);
+            if (myRecent.length) {
+                const lines = myRecent.reverse().map(r => `- "${(r.text || '').replace(/\s+/g, ' ').slice(0, 90)}${(r.text || '').length > 90 ? '…' : ''}"`).join('\n');
+                userPrompt += `[YOUR LAST REPLIES IN THIS CHAT — do NOT repeat these or keep pushing their topics; say something fresh:]\n${lines}\n\n`;
+            }
+        } catch (e) { /* best-effort */ }
+
         userPrompt += `[THE CONVERSATION SO FAR]\n${conversationScript}\nMe:`;
 
         // ✂️ SMART TRUNCATION — per-engine token limits
@@ -2912,6 +2965,11 @@ async function startSession(userId, sessionId) {
                     const selfText = (savedData?.content?.text || '').trim();
                     const selfCleanId = savedData?.cleanId;
                     if (selfText && selfCleanId && !selfText.startsWith('[') && !isBotSentText(sessionId, selfCleanId, selfText)) {
+                        // OWNER TAKEOVER: the human is in this chat — AI goes quiet here for a
+                        // while and any pending deferred reply is cancelled (don't talk over them).
+                        noteOwnerTakeover(userId, selfCleanId);
+                        cancelDeferredReply(userId, sessionId, selfCleanId);
+                        io.emit('log', { sessionId, msg: `👤 You're in this chat — AI paused here for 10 min.` });
                         const lastBot = await db.get(
                             `SELECT text, timestamp FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ?
                              AND message_id LIKE 'BOT_%' ORDER BY timestamp DESC LIMIT 1`,
@@ -2946,6 +3004,14 @@ async function startSession(userId, sessionId) {
 
             io.emit('log', { sessionId, msg: `📩 Msg from ${contactName}` });
             io.emit('processing_contact', { sessionId, name: contactName, id: cleanId });
+
+            // 👤 OWNER-IN-CHAT CHECK: if the owner personally replied here recently, they've
+            // taken over — the AI stays silent instead of talking alongside them.
+            if (isOwnerActive(userId, cleanId)) {
+                console.log(`[${sessionId}] 👤 Owner is active in chat with ${contactName} — AI staying quiet.`);
+                io.emit('log', { sessionId, msg: `👤 You've got ${contactName} — AI staying out of it.` });
+                continue;
+            }
 
             // 🚨 BURST PROTECTION CHECK
             const burstMode = await isBurstMode(userId, cleanId);
