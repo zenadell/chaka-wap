@@ -2151,10 +2151,15 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         // We label turns by is_from_me (NOT the stored sender string): outgoing echoes are
         // saved under mixed tags ("BOT", "Temple", a pushName like "prinx") and feeding those
         // raw labels to the model made it echo "prinx:/BOT:" scaffolding straight into replies.
+        // EXCLUDE the AI's own past replies from the conversation context. The bot's sent
+        // messages come back as WhatsApp echoes tagged sender='BOT' (with a NORMAL id, so the
+        // 'BOT_%' filter misses them). Feeding those back made the model mimic its OWN prior
+        // outputs — e.g. continuing an old rambling topic and matching its own essay length.
+        // We keep only what the OTHER person said + the owner's OWN typed messages.
         const recentHistoryRows = await db.all(
             `SELECT sender, text, message_id, is_from_me FROM messages
              WHERE session_id = ? AND contact_id = ? AND user_id = ?
-             AND message_id NOT LIKE 'BOT_%'
+             AND message_id NOT LIKE 'BOT_%' AND sender != 'BOT'
              ORDER BY timestamp DESC LIMIT ?`,
             [sessionId, contactId, userId, contextLimit]
         );
@@ -2182,11 +2187,14 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         if (keywords.length > 0) {
             const placeholders = keywords.map(() => `text LIKE ?`).join(' OR ');
             const params = keywords.map(k => `%${k}%`);
+            // Exclude the AI's own past replies (sender='BOT' echoes + BOT_ ids) — retrieving
+            // them made the model re-rant its own old outputs when keywords overlapped.
             keywordMemories = await db.all(
-                `SELECT sender, text, date FROM messages 
-                 WHERE session_id = ? AND contact_id = ? AND user_id = ? 
+                `SELECT sender, text, date, is_from_me FROM messages
+                 WHERE session_id = ? AND contact_id = ? AND user_id = ?
                  AND (${placeholders})
                  AND text != ?
+                 AND sender != 'BOT' AND message_id NOT LIKE 'BOT_%'
                  ORDER BY timestamp DESC LIMIT 3`,
                 [sessionId, contactId, userId, ...params, incomingMsg]
             );
@@ -2201,10 +2209,11 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             if (queryVector) {
                 // KEY FIX: Scoped to THIS contact, not all users, limited to 50
                 const contactVectors = await db.all(
-                    `SELECT message_id, text, timestamp, date, sender, embedding 
-                     FROM messages 
-                     WHERE session_id = ? AND contact_id = ? AND user_id = ? 
-                     AND embedding IS NOT NULL 
+                    `SELECT message_id, text, timestamp, date, sender, embedding
+                     FROM messages
+                     WHERE session_id = ? AND contact_id = ? AND user_id = ?
+                     AND embedding IS NOT NULL
+                     AND sender != 'BOT' AND message_id NOT LIKE 'BOT_%'
                      ORDER BY timestamp DESC LIMIT 50`,
                     [sessionId, contactId, userId]
                 );
@@ -2261,22 +2270,26 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         } catch(e) { console.error("Graph fetch err:", e); }
 
         if (keywordMemories.length > 0) {
-            const kwBlock = keywordMemories.map(m => `${m.sender}: ${m.text}`).join('\n');
+            // Label Me/contact by is_from_me — never leak raw sender tags into the prompt.
+            const kwBlock = keywordMemories.map(m => `${m.is_from_me ? 'Me' : contactName}: ${m.text}`).join('\n');
             memoryDetails += `[KEYWORD MATCH]\n${kwBlock}\n\n`;
         }
 
         for (const mem of retrievedMemories) {
-            // Only fetch tight context window (±60s) to keep tokens low
+            // Only fetch tight context window (±60s) to keep tokens low. Bot outputs are
+            // excluded (self-mimicry loop) and turns are labelled Me/contact — raw sender
+            // tags like "BOT:"/"Temple:" must never reach the prompt.
             const context = await db.all(
-                `SELECT sender, text FROM messages 
+                `SELECT sender, text, is_from_me FROM messages
                  WHERE session_id = ? AND contact_id = ? AND user_id = ?
                  AND timestamp BETWEEN ? AND ?
+                 AND sender != 'BOT' AND message_id NOT LIKE 'BOT_%'
                  ORDER BY timestamp ASC LIMIT 4`,
                 [sessionId, contactId, userId, mem.timestamp - 60, mem.timestamp + 60]
             );
             if (context.length > 0) {
                 memoryDetails += `[RELATED (${Math.round(mem.score * 100)}% match)]\n`;
-                memoryDetails += context.map(c => `${c.sender}: ${c.text}`).join('\n') + '\n\n';
+                memoryDetails += context.map(c => `${c.is_from_me ? 'Me' : contactName}: ${c.text}`).join('\n') + '\n\n';
             }
         }
 
