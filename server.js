@@ -191,6 +191,25 @@ async function isBurstMode(userId, contactId) {
     return recent.length >= 3;
 }
 
+// ── IGNORE CHECK (alias-aware) ──
+// WhatsApp addresses the same person two ways: their phone jid (…@s.whatsapp.net) and a
+// hidden "lid" (…@lid). History rows use one, live messages often the other — so muting
+// the row you found in search didn't stop replies keyed on the twin id. This checks BOTH
+// forms via the jid_aliases bridge (populated from msg.key.senderPn on lid messages).
+async function isContactIgnored(userId, sessionId, cleanId) {
+    try {
+        const row = await db.get(`SELECT auto_reply FROM contacts WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [sessionId, cleanId, userId]);
+        if (row && row.auto_reply === 0) return true;
+        const alias = await db.get(`SELECT a, b FROM jid_aliases WHERE user_id = ? AND session_id = ? AND (a = ? OR b = ?)`, [userId, sessionId, cleanId, cleanId]);
+        if (alias) {
+            const twin = alias.a === cleanId ? alias.b : alias.a;
+            const row2 = await db.get(`SELECT auto_reply FROM contacts WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [sessionId, twin, userId]);
+            if (row2 && row2.auto_reply === 0) return true;
+        }
+    } catch (e) { /* never block replies on a lookup error */ }
+    return false;
+}
+
 // ── OWNER TAKEOVER ──
 // When the owner personally sends a message in a chat (from their phone — not a bot
 // send), they've "stepped in": the AI goes quiet in THAT chat for a while instead of
@@ -246,8 +265,7 @@ async function deliverDeferredReply(ctx) {
     // Respect the same gates as the live path.
     const g = await db.get(`SELECT master_auto_reply FROM global_settings WHERE id='settings' AND user_id=?`, [userId]);
     if (g && g.master_auto_reply === 0) return;
-    const cs = await db.get(`SELECT auto_reply FROM contacts WHERE session_id=? AND contact_id=? AND user_id=?`, [sessionId, cleanId, userId]);
-    if (cs && cs.auto_reply === 0) return;
+    if (await isContactIgnored(userId, sessionId, cleanId)) return; // alias-aware mute
 
     let replyText = await generateSmartReply(userId, sessionId, contactName, cleanId, text);
     if (!replyText) return;
@@ -338,6 +356,13 @@ async function initDB() {
             auto_reply INTEGER DEFAULT 1,
             custom_prompt TEXT,
             PRIMARY KEY (session_id, contact_id)
+        );
+        CREATE TABLE IF NOT EXISTS jid_aliases (
+            user_id TEXT,
+            session_id TEXT,
+            a TEXT,  -- one clean contact_id form (e.g. the @lid id)
+            b TEXT,  -- the other form for the SAME person (e.g. the phone-number id)
+            UNIQUE(user_id, session_id, a, b)
         );
         CREATE TABLE IF NOT EXISTS messages (
             message_id TEXT PRIMARY KEY,
@@ -1515,14 +1540,28 @@ app.get('/api/contacts', authenticateToken, async (req, res) => {
 });
 
 // Toggle whether the AI replies to a contact. enabled=false => ignore.
+// The same person can exist under TWO contact ids (phone jid + lid) — apply the toggle
+// to both forms via jid_aliases so the mute holds no matter which id live messages use.
 app.post('/api/contacts/auto-reply', authenticateToken, async (req, res) => {
     const { sessionId, contactId, enabled } = req.body || {};
     if (!sessionId || !contactId) return res.status(400).json({ error: 'Missing contact.' });
-    const result = await db.run(
-        'UPDATE contacts SET auto_reply = ? WHERE user_id = ? AND session_id = ? AND contact_id = ?',
-        [enabled ? 1 : 0, req.user.id, sessionId, contactId]
-    );
-    res.json({ ok: true, changed: result.changes });
+    const val = enabled ? 1 : 0;
+    const setFor = async (cid) => db.run(
+        `INSERT INTO contacts (session_id, contact_id, user_id, name, jid, last_active, auto_reply)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(session_id, contact_id) DO UPDATE SET auto_reply = excluded.auto_reply`,
+        [sessionId, cid, req.user.id, cid.split('_')[0], cid, Math.floor(Date.now() / 1000), val]);
+    await setFor(contactId);
+    let twins = 0;
+    try {
+        const alias = await db.get(`SELECT a, b FROM jid_aliases WHERE user_id = ? AND session_id = ? AND (a = ? OR b = ?)`,
+            [req.user.id, sessionId, contactId, contactId]);
+        if (alias) {
+            const twin = alias.a === contactId ? alias.b : alias.a;
+            if (twin && twin !== contactId) { await setFor(twin); twins = 1; }
+        }
+    } catch (e) { /* alias mirroring is best-effort */ }
+    res.json({ ok: true, changed: 1 + twins });
 });
 
 // Count of currently-ignored contacts (for the badge).
@@ -2955,6 +2994,21 @@ async function startSession(userId, sessionId) {
             // SAVE EVERYTHING (including my own messages for RAG context)
             const savedData = await saveMessageToDB(userId, sessionId, msg, false);
 
+            // Bridge the two identities WhatsApp uses for the same person: lid messages
+            // carry the real phone jid in key.senderPn — store the pair so mute/settings
+            // apply no matter which form a row or message uses.
+            try {
+                const pn = msg.key?.senderPn;
+                if (pn && jidRaw.includes('@lid')) {
+                    const lidClean = jidRaw.replace(/[^a-zA-Z0-9]/g, '_');
+                    const pnClean = String(pn).replace(/[^a-zA-Z0-9]/g, '_');
+                    if (lidClean !== pnClean) {
+                        await db.run(`INSERT OR IGNORE INTO jid_aliases (user_id, session_id, a, b) VALUES (?,?,?,?)`,
+                            [userId, sessionId, lidClean, pnClean]);
+                    }
+                }
+            } catch (e) { /* alias recording is best-effort */ }
+
             // Only trigger AI reply for incoming messages
             if (msg.key.fromMe) {
                 // LEARNING LOOP: if the OWNER (not the bot) typed this, and the bot had
@@ -3040,7 +3094,8 @@ async function startSession(userId, sessionId) {
             const globalDraftMode = globalDoc ? (globalDoc.global_draft_mode === 1) : false;
 
             const contactSettings = await db.get(`SELECT auto_reply, draft_mode FROM contacts WHERE session_id = ? AND contact_id = ? AND user_id = ?`, [sessionId, cleanId, userId]);
-            const contactAutoReply = contactSettings ? (contactSettings.auto_reply === 1) : true;
+            // Alias-aware: honours a mute set on EITHER of the contact's two id forms (lid/phone).
+            const contactAutoReply = !(await isContactIgnored(userId, sessionId, cleanId));
             const contactDraftMode = contactSettings ? (contactSettings.draft_mode === 1) : false;
             
             const isDraftMode = globalDraftMode || contactDraftMode;
