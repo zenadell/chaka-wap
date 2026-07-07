@@ -81,7 +81,11 @@ const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepsee
 // and ideal for short conversational WhatsApp replies. NOTE: this alias is scheduled to
 // retire 2026-07-24 — re-verify the non-thinking path on 'deepseek-v4-flash' before then.
 // For future agentic/tool-calling work, route those calls to 'deepseek-reasoner' instead.
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+// Switchable at runtime from the admin panel: 'deepseek-chat' (V4 Flash, fast) or
+// 'deepseek-reasoner' (V4 Pro thinking — smarter, slower, pricier). Persisted in
+// platform_settings and loaded on boot.
+let DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+const DEEPSEEK_MODELS = ['deepseek-chat', 'deepseek-reasoner'];
 // OpenRouter remains available as a fallback/alternate route to the same model family.
 const OPENROUTER_TEXT_MODEL = process.env.OPENROUTER_TEXT_MODEL || 'deepseek/deepseek-v4-flash';
 // Force a specific text engine platform-wide, overriding each user's saved choice.
@@ -357,6 +361,10 @@ async function initDB() {
             custom_prompt TEXT,
             PRIMARY KEY (session_id, contact_id)
         );
+        CREATE TABLE IF NOT EXISTS platform_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
         CREATE TABLE IF NOT EXISTS jid_aliases (
             user_id TEXT,
             session_id TEXT,
@@ -505,6 +513,15 @@ async function initDB() {
     // Ensure global settings exist for Admin
     await db.run(`INSERT OR IGNORE INTO global_settings (id, user_id, master_auto_reply, active_api, chaka_model) VALUES ('settings', ?, 1, 'deepseek', 'chaka-medium')`, [adminId]);
     await loadGlobalConfig(adminId); // Load the admin's config just for legacy compatibility in memory, though we should transition to per-user active_apis.
+
+    // Restore the admin-selected DeepSeek model (Flash vs Pro) across restarts.
+    try {
+        const m = await db.get(`SELECT value FROM platform_settings WHERE key = 'deepseek_model'`);
+        if (m && DEEPSEEK_MODELS.includes(m.value)) {
+            DEEPSEEK_MODEL = m.value;
+            console.log(`🧠 Text model (admin-selected): ${DEEPSEEK_MODEL}`);
+        }
+    } catch (e) { /* default stands */ }
     console.log("🗄️ Multi-Tenant SQLite Database Initialized Successfully.");
 }
 
@@ -765,9 +782,11 @@ async function tryDeepSeekFailover(userId, sessionId, systemPrompt, userPrompt, 
                         { role: 'user', content: userPrompt }
                     ],
                     max_tokens: 500,
-                    // DeepSeek recommends ~1.3 for natural conversation; callers pass
-                    // 1.3 for casual accounts, 1.0 for professional (less improvisation).
-                    temperature: typeof opts.temperature === 'number' ? opts.temperature : 1.0,
+                    // deepseek-reasoner ignores/rejects sampling params — only send
+                    // temperature on the flash (chat) model.
+                    ...(DEEPSEEK_MODEL === 'deepseek-chat'
+                        ? { temperature: typeof opts.temperature === 'number' ? opts.temperature : 1.0 }
+                        : {}),
                     stream: false
                 }),
                 signal: controller.signal
@@ -1671,6 +1690,30 @@ app.get('/api/admin/stats', authenticateToken, async (req, res) => {
 });
 
 // --- AI OPS ADMIN: ask DeepSeek about the live platform state ---
+// Admin: choose the DeepSeek text model platform-wide (Flash vs Pro) for A/B testing.
+app.get('/api/admin/model', authenticateToken, async (req, res) => {
+    if (!isAdminReq(req)) return res.status(403).json({ error: "Forbidden" });
+    res.json({
+        current: DEEPSEEK_MODEL,
+        options: [
+            { id: 'deepseek-chat', label: 'DeepSeek V4 Flash — fast (default)' },
+            { id: 'deepseek-reasoner', label: 'DeepSeek V4 Pro (thinking) — smarter, slower' }
+        ]
+    });
+});
+app.post('/api/admin/model', authenticateToken, async (req, res) => {
+    if (!isAdminReq(req)) return res.status(403).json({ error: "Forbidden" });
+    const model = (req.body?.model || '').toString();
+    if (!DEEPSEEK_MODELS.includes(model)) return res.status(400).json({ error: "Unknown model." });
+    DEEPSEEK_MODEL = model; // applies to every reply from now on, all users
+    try {
+        await db.run(`INSERT INTO platform_settings (key, value) VALUES ('deepseek_model', ?)
+                      ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [model]);
+    } catch (e) { /* still active in memory */ }
+    console.log(`🧠 Admin switched text model → ${model}`);
+    res.json({ ok: true, current: model });
+});
+
 app.post('/api/admin/ai', authenticateToken, async (req, res) => {
     if (!isAdminReq(req)) return res.status(403).json({ error: "Forbidden" });
     try {
@@ -2210,15 +2253,14 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         // We label turns by is_from_me (NOT the stored sender string): outgoing echoes are
         // saved under mixed tags ("BOT", "Temple", a pushName like "prinx") and feeding those
         // raw labels to the model made it echo "prinx:/BOT:" scaffolding straight into replies.
-        // EXCLUDE the AI's own past replies from the conversation context. The bot's sent
-        // messages come back as WhatsApp echoes tagged sender='BOT' (with a NORMAL id, so the
-        // 'BOT_%' filter misses them). Feeding those back made the model mimic its OWN prior
-        // outputs — e.g. continuing an old rambling topic and matching its own essay length.
-        // We keep only what the OTHER person said + the owner's OWN typed messages.
+        // The transcript INCLUDES the AI's own turns. We once excluded them (anti-mimicry),
+        // which blinded the model to what it had already said — it re-greeted, contradicted
+        // its own answers ("No" then "I told you yes"), echoed questions back and re-sent
+        // near-identical lines. Coherence needs its own turns visible; mimicry is now
+        // controlled by per-message truncation here + the emoji governor + the repeat guard.
         const recentHistoryRows = await db.all(
             `SELECT sender, text, message_id, is_from_me FROM messages
              WHERE session_id = ? AND contact_id = ? AND user_id = ?
-             AND message_id NOT LIKE 'BOT_%' AND sender != 'BOT'
              ORDER BY timestamp DESC LIMIT ?`,
             [sessionId, contactId, userId, contextLimit]
         );
@@ -2417,8 +2459,12 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
         }
         // Clean two-party transcript: our side is always "Me", their side is always the
         // contact's name. Labelled strictly by is_from_me so no internal tag ("BOT",
-        // "Temple", a pushName) can leak into the model's completion.
-        const conversationScript = dedupedHistory.map(h => `${h.is_from_me ? 'Me' : contactName}: ${h.text}`).join('\n');
+        // "Temple", a pushName) can leak into the model's completion. Each turn is
+        // truncated so one old essay can't become a length/topic template.
+        const conversationScript = dedupedHistory.map(h => {
+            const t = (h.text || '').replace(/\s+/g, ' ').trim();
+            return `${h.is_from_me ? 'Me' : contactName}: ${t.length > 220 ? t.slice(0, 220) + '…' : t}`;
+        }).join('\n');
         const effectivePrompt = (contactRow && contactRow.custom_prompt) || (globalRow && globalRow.custom_prompt) || "";
         // Fetch available stickers for this contact
         let stickerContext = "";
@@ -2494,94 +2540,53 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
   • If the chat needs the human owner — an upset/angry customer, a complaint or refund, a complex or high-value request, or they explicitly ask for a human — append: [HANDOFF: <short reason>]
   Only use a tag when it genuinely applies. Never mention these tags in your words.`;
 
-        // ── HUMAN-FIRST PROMPT ──
-        // We deliberately do NOT open with "you are an AI assistant" — that single phrase
-        // is what makes models write like bots. We open with the human frame, feed the
-        // owner's real voice, and keep the Chaka identity as a fallback that only surfaces
-        // if someone actually asks. This is the core of sounding like a real person.
-        const humanFrame = isProfessional
-            ? `You are the person replying on WhatsApp for ${ownerLabel}. You're a real human on the other end — warm, sharp, genuinely helpful. There is no "assistant" and no "user" here, just you and the person messaging. Stay in the voice shown in your persona and in the sample messages, even if the other person is very casual, blunt, or rude.`
-            : `You are texting from ${ownerLabel === 'them' ? "someone's" : ownerLabel + "'s"} own WhatsApp — as them. To everyone in this chat you simply ARE ${ownerLabel === 'them' ? 'them' : ownerLabel}. Reply exactly the way they would to this person. There's no "assistant" and no "user" — it's just two people texting.`;
+        // ── PROMPT v3: small, human, absolute ──
+        // Rebuilt from scratch after live tests: the old ~20-rule mega-prompt overloaded the
+        // model into incoherence (nonsense one-word replies, re-greeting, contradictions).
+        // Few rules stated once; the measured language directive goes LAST (recency=weight).
+        // Everything else is enforced in CODE (emoji governor, repeat guard, sanitiser),
+        // not in prose the model can ignore.
+        const roleLine = isProfessional
+            ? `You're replying on WhatsApp for ${ownerLabel} — a real, warm, sharp human handling their messages.`
+            : `You're ${ownerLabel === 'them' ? 'the owner of this WhatsApp' : ownerLabel}, texting from your own phone. To ${contactName} you are just you — a normal person texting.`;
 
-        // Behavioural coaching that kills the AI tells — phrased as how a person texts,
-        // not as a compliance checklist.
-        const humanRules = `How to sound real:
-- KEEP IT SHORT — match their message. A one-line message gets a one-line reply. NEVER turn a short or casual message into a long update, a "status report", or a multi-paragraph essay. Walls of text are the single biggest giveaway you're not a real person texting. If you wrote more than ~2 short lines, cut it down.
-- Your memory and the context below are BACKGROUND ONLY — not a script to read out. Do NOT bring up old topics, past projects, or earlier discussions (e.g. things you talked about days ago) unless they EXPLICITLY ask about that exact thing right now. If what they just said isn't about a past topic, don't mention it at all. Answer THIS message, nothing else.
-- MAKE SENSE FIRST. Your reply must be a clear, on-point answer to what they actually just said. Slang and jokes are HOW you say it — never an excuse to ramble or bolt on random lines that don't connect (no unrelated one-liners like "call MTN before NEPA take light"). One clear point, in their voice.
-- Be PLAIN and direct, not clever or poetic. Real people say "yeah went this morning, was good" — not riddles like "stairway to heaven steps say less" or "my neck dey crane from blessings stacking". If a line sounds like a punchline or a proverb, cut it and just say the normal thing.
-- MIRROR THIS CHAT, NOT YOUR OTHER CHATS. The language, dialect and register of your reply come from THIS conversation and THIS contact's samples ONLY. If this chat is in plain English, write plain, correct English — do NOT slip in pidgin, slang, or casual banter imported from how the owner talks to other people. If this chat IS in pidgin, UK roadman slang, formal English, French — whatever it is — write exactly that. Some contacts are serious/professional: with them, be serious. Read the room from the messages below.
-- EMOJIS: copy THIS contact's chat, not a habit. Most of your texts should have NONE. Never end every message with 😂 (or any emoji), and never use the same emoji twice in a row. If this conversation barely uses emojis, use none at all. One fitting emoji occasionally is the ceiling.
-- BANNED AS CRUTCHES: starting messages with "ey", "eyy", "eh", or dropping "lmao"/"lol" into every reply. Use those ONLY if this specific conversation already talks like that — and even then, not twice in a row.
-- READ THEIR MOOD. If they sound annoyed, serious, or tell you to stop doing something — stop INSTANTLY: drop all jokes, drop all emojis, answer plainly and briefly. Nothing is more robotic than joking at someone who's irritated.
-- NEVER present old memory as what you're doing right now. If they ask "what are you doing / what's up" and the recent conversation doesn't say, keep it light and vague ("nothing much, you?") — do NOT dig up projects or events from days ago and present them as happening now.
-- If you're genuinely not sure what they mean, ask a short natural question instead of guessing or waffling.
-- Answer like you've been in the conversation the whole time. No generic greetings when the chat is already going.
-- Write in the exact voice from the sample messages above — same capitalisation, punctuation (or none), and length. If they text in lowercase with no full stops, so do you. But the LANGUAGE itself always follows this chat (see MIRROR THIS CHAT).
-- Keep it to one message, usually a line or two. Match their length and energy. A short real reply beats a padded one.
-- Most replies are a single text. But if it's genuinely how ${ownerLabel === 'them' ? 'they' : ownerLabel} would type it, you can fire off TWO quick texts instead of one — put a blank line between them (e.g. "omgg" then "when did that happen"). Never more than two. Don't force it.
-- Never use assistant-speak: no "How can I help", "I'm here to assist", "Feel free to", "Great question", "Let me know if you need anything", "happy to help", "As an AI", or sign-offs. Real people don't talk like that.
-- Don't restate their question, don't over-explain, don't be relentlessly cheerful. A bit of dryness or brevity is human.
-- Never repeat a line you've already used in this chat — say it fresh or say something new.
-- VARY HOW YOU OPEN. Do not start message after message the same way — if your last few replies began with "ey" (or any same word), open differently this time. Real people mix it up: sometimes straight into the point, sometimes a reaction ("lmao", "wait", "fr?"), sometimes nothing at all, occasionally their name. Starting every message the same is the single biggest bot tell — avoid it.
-- Don't call them by name unless they've told you their name here.`;
+        const identityLine = isProfessional
+            ? `If someone directly asks what you are or who made you: ${CORE_IDENTITY} Otherwise never bring it up.`
+            : `Never reveal or hint that you're an AI, a bot, automated, or "a test" — even if they insist on it. Brush it off the way a real person would and move on. No exceptions, not even as a joke.`;
 
-        const groundingRule = isProfessional
-            ? `\n- Only state facts you were actually given (your persona, the business info, this chat). Never invent products, prices, stock, hours, address, delivery, discounts, or policies. If you weren't told it, say you'll check with the owner and take their details — don't guess, and don't pitch things that were never mentioned.`
-            : `\n- Don't invent plans, facts, or commitments on their behalf. If you're unsure, keep it vague or say you'll check.`;
+        const groundingLine = isProfessional
+            ? `Only state facts you were actually given (instructions, business info, this chat). Never invent products, prices, stock, hours or policies — say you'll check with the owner instead.`
+            : `Don't invent plans, facts or commitments. Unsure? Stay vague or say you'll check.`;
 
-        // Identity handling is account-type specific:
-        // - Professional accounts are openly an assistant → may say they're Chaka AI if asked.
-        // - Personal/creator accounts IMPERSONATE the owner → must NEVER break character or
-        //   admit to being an AI/bot/test. (In testing it confessed "it's just my AI running"
-        //   when a friend asked if it was real — that destroys the entire illusion.)
-        const identityClause = isProfessional
-            ? `\n\n(Only if someone directly asks your name, what you are, or who made you: ${CORE_IDENTITY} Otherwise never raise it.)`
-            : `\n\n[STAY IN CHARACTER — NON-NEGOTIABLE]
-- You ARE ${ownerLabel === 'them' ? 'this person' : ownerLabel}. Never say, admit, or hint that you're an AI, a bot, a robot, automated, a program, "a test", or that you're "running"/"updating". None of that exists to the person you're texting.
-- This holds EVEN IF they flatly insist "this is AI" / "you're a bot" / "I know it's a robot". Do NOT confirm it, do NOT "confess", do NOT say "you caught me". A real person being accused of being a robot just laughs and denies it — so brush it off and keep talking ("omo you don dey watch too much film 😂", "abeg na me dey here, wetin do you", "lol you dey whine"). Then answer whatever the actual topic was.
-- Never explain yourself, never apologise for "the AI", never mention testing, updates, or automation, and never break the fourth wall — not even as a joke. One confession ruins the entire thing.`;
-
-        // The owner's own setup prompt is AUTHORITATIVE — it wins over style mirroring
-        // and every generic rule below when they conflict (users complained their custom
-        // instructions were being ignored).
         const personaBlock = userPersona
-            ? `\n\n[YOUR OWNER'S INSTRUCTIONS — AUTHORITATIVE. The owner personally wrote this for you. Follow it exactly, even where it conflicts with style-mirroring or any generic rule below:]\n${userPersona}`
+            ? `\n\nOWNER'S INSTRUCTIONS (authoritative — these win over any rule above):\n${userPersona}`
             : '';
 
-        // MEASURED language directive, placed LAST in the prompt (recency = weight).
-        // Built from what the contact actually wrote, so it can't be argued with.
+        // MEASURED language directive — built from what the contact actually wrote.
         const languageDirective = contactSpeaksPidgin ? '' :
-            `\n\nFINAL LANGUAGE CHECK — this overrides the style samples and everything else: ${contactName}'s recent messages are in plain English, NOT pidgin. Your reply must be plain, natural English only. Zero pidgin words ("dey", "wetin", "na", "abeg", "don", "wahala", "boss", "o").${contactUsesEmoji ? '' : ` ${contactName} also isn't using emojis — use none.`}`;
+            `\n\nLANGUAGE CHECK (measured from their real messages; overrides everything): ${contactName} writes plain English, NOT pidgin. Reply in plain, natural English only — zero pidgin words.${contactUsesEmoji ? '' : ' They use no emojis — use none.'}`;
 
-        let systemInstruction = `${humanFrame}${personaBlock}${kbContext}${learnContext}\n\nYou're talking to: ${contactName}${stickerContext}\n\n${humanRules}${groundingRule}\n${scheduleRule}${isProfessional ? '\n' + agentActions : ''}${identityClause}\n\n(For reference, right now it's ${new Date().toISOString()}.)${languageDirective}`;
+        let systemInstruction = `${roleLine}
 
-        // ── BUILD FINAL PROMPT (token-efficient format) ──
+Six rules — absolute:
+1. Reply ONLY to their last message, in ONE short text (two, separated by a blank line, only when truly natural). Their message is short → yours is short.
+2. Sound like THIS chat: same language, tone and emoji habits as ${contactName}'s messages below. If they're annoyed or serious, drop all jokes and emojis and answer plainly.
+3. Before writing, reread your own "Me:" lines in the chat. Never repeat or rephrase them, never greet twice, never contradict what you already said there.
+4. No assistant-speak, no essays, no reciting background or old topics unless they ask. Asked "what are you doing?" → answer for right now ("nothing much"), not with old projects.
+5. ${groundingLine}
+6. ${identityLine}${personaBlock}${kbContext}${learnContext}${stickerContext}
+${isProfessional ? agentActions + '\n' : ''}${scheduleRule}
+(Now: ${new Date().toISOString()})${languageDirective}`;
+
+        // ── BUILD FINAL PROMPT — minimal context package ──
+        // (No [YOUR LAST REPLIES] block anymore: the transcript now contains our own turns,
+        // which is what actually fixes repetition/contradiction.)
         let userPrompt = '';
-        if (pinnedContext || memoryDetails) {
-            // Frame everything below as background so the model stops reciting old topics
-            // unprompted (e.g. dumping a project status when the message was just "you good?").
-            userPrompt += `[BACKGROUND MEMORY — for your awareness ONLY. Do NOT recite any of this or raise these topics unless they directly ask about them in their latest message. It is context, not something to talk about.]\n`;
+        const memoryPack = `${pinnedContext}${memoryDetails}`.trim();
+        if (memoryPack) {
+            userPrompt += `Background you happen to know (never recite it or raise these topics unless they ask):\n${memoryPack.slice(0, 500)}\n\n`;
         }
-        if (pinnedContext) userPrompt += pinnedContext;
-        if (memoryDetails) userPrompt += memoryDetails;
-        if (styleContext)  userPrompt += styleContext;
-
-        // Compact "what you already replied" — bot outputs are excluded from the transcript
-        // (self-mimicry), so give the model a tiny, truncated record purely to avoid
-        // repeating itself. Too short to establish a topic or an essay pattern.
-        try {
-            const myRecent = await db.all(
-                `SELECT text FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ?
-                 AND (sender = 'BOT' OR message_id LIKE 'BOT_%') AND is_from_me = 1
-                 ORDER BY timestamp DESC LIMIT 3`,
-                [sessionId, contactId, userId]);
-            if (myRecent.length) {
-                const lines = myRecent.reverse().map(r => `- "${(r.text || '').replace(/\s+/g, ' ').slice(0, 90)}${(r.text || '').length > 90 ? '…' : ''}"`).join('\n');
-                userPrompt += `[YOUR LAST REPLIES IN THIS CHAT — do NOT repeat these or keep pushing their topics; say something fresh:]\n${lines}\n\n`;
-            }
-        } catch (e) { /* best-effort */ }
-
+        if (styleContext) userPrompt += styleContext;
         userPrompt += `[THE CONVERSATION SO FAR]\n${conversationScript}\nMe:`;
 
         // ✂️ SMART TRUNCATION — per-engine token limits
@@ -2666,6 +2671,27 @@ async function generateSmartReply(userId, sessionId, contactName, contactId, inc
             replyText = replyText.replace(/[ \t]{2,}/g, ' ').replace(/ +\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
         } catch (e) { /* governor is best-effort; never blocks the reply */ }
         if (!replyText) return null;
+
+        // ── REPEAT GUARD (deterministic) ── never send a (near-)duplicate of one of our
+        // last replies in this chat. Live test showed the model re-sending the same line a
+        // minute later; a real person never does that. Silence beats parroting.
+        try {
+            const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const rNorm = norm(replyText);
+            if (rNorm.length > 8) {
+                const mine = await db.all(
+                    `SELECT text FROM messages WHERE session_id = ? AND contact_id = ? AND user_id = ?
+                     AND (sender = 'BOT' OR message_id LIKE 'BOT_%') AND is_from_me = 1
+                     ORDER BY timestamp DESC LIMIT 3`, [sessionId, contactId, userId]);
+                for (const m of mine) {
+                    const n = norm(m.text);
+                    if (n && (n === rNorm || n.includes(rNorm) || rNorm.includes(n))) {
+                        console.log(`[${sessionId}] 🔁 Duplicate reply suppressed ("${replyText.slice(0, 40)}…")`);
+                        return null;
+                    }
+                }
+            }
+        } catch (e) { /* guard is best-effort */ }
 
         // Track spending and burst stats
         const usedTokens = Math.ceil(userPrompt.length / 4) + Math.ceil(replyText.length / 4);

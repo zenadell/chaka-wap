@@ -106,6 +106,17 @@
             </div>
         </div>
 
+        <!-- Text model (platform-wide A/B) -->
+        <div class="bg-card border border-borderMuted rounded-2xl p-6 mb-8">
+            <h3 class="font-semibold mb-1 flex items-center gap-2"><i class="fas fa-microchip text-brandOrange"></i> Reply Engine Model</h3>
+            <p class="text-textMuted text-xs mb-4">Platform-wide — applies to every user's replies instantly. Use it to A/B test quality vs speed.</p>
+            <div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                <select id="model-select" class="flex-1 bg-base border border-borderMuted rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-brandOrange/60"></select>
+                <button id="model-save" class="bg-brandOrange hover:bg-brandOrangeHover text-white font-semibold px-5 py-3 rounded-xl transition text-sm">Apply</button>
+            </div>
+            <p id="model-status" class="text-[11px] text-textMuted mt-2"></p>
+        </div>
+
         <!-- Account security -->
         <div class="bg-card border border-borderMuted rounded-2xl p-6 mb-8">
             <h3 class="font-semibold mb-1 flex items-center gap-2"><i class="fas fa-key text-brandOrange"></i> Change Admin Password</h3>
@@ -269,6 +280,31 @@
         document.getElementById('ai-send').onclick = () => askAI(document.getElementById('ai-input').value);
         document.getElementById('ai-input').addEventListener('keydown', e => { if (e.key === 'Enter') askAI(e.target.value); });
         document.querySelectorAll('.ai-chip').forEach(c => c.onclick = () => askAI(c.textContent));
+
+        // --- Reply engine model selector (platform-wide) ---
+        (async () => {
+            const sel = document.getElementById('model-select');
+            const status = document.getElementById('model-status');
+            try {
+                const r = await fetch('/api/admin/model', { headers: authHeaders });
+                const d = await r.json();
+                (d.options || []).forEach(o => {
+                    const opt = document.createElement('option');
+                    opt.value = o.id; opt.textContent = o.label;
+                    if (o.id === d.current) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                status.textContent = `Active: ${d.current}`;
+            } catch (e) { status.textContent = 'Could not load model info.'; }
+            document.getElementById('model-save').onclick = async () => {
+                status.textContent = 'Applying…';
+                try {
+                    const r = await fetch('/api/admin/model', { method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: sel.value }) });
+                    const d = await r.json();
+                    status.textContent = d.ok ? `Active: ${d.current} ✓ (live for all replies now)` : (d.error || 'Failed.');
+                } catch (e) { status.textContent = 'Network error.'; }
+            };
+        })();
 
         // --- Change password ---
         document.getElementById('admin-email').textContent = user.email || '';
